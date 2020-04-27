@@ -131,7 +131,7 @@ def version_tuplet(versionstr:str) -> Tuple[int, int, int]:
     return ints
     
 
-def _find_opcodes_dir(possible_dirs) -> Optional[str]:
+def _find_opcodes_dir(possible_dirs) -> Optional[Path]:
     """
     Given a list of possible paths, find the folder where
     the system plugins are installed
@@ -148,7 +148,8 @@ def _find_opcodes_dir(possible_dirs) -> Optional[str]:
             continue
         rtpa = "librtpa" + ext
         if any(plugin for plugin in plugins if rtpa == plugin.name):
-            return d
+            return Path(d).expanduser()
+        errormsg(f"Found plugins dir {d}, but it does not seem to be the systems plugin path")
     return None
 
 
@@ -385,7 +386,11 @@ class PluginsIndex:
             return None
         out = _find_opcodes_dir(possible_dirs)
         if out:
-            return Path(out)
+            assert isinstance(out, Path)
+            assert out.exists()
+            assert out.is_dir()
+            assert out.is_absolute()
+            return out
         errormsg(f"System plugins path not found! Searched paths: {possible_dirs}")
         return None
 
