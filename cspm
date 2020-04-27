@@ -409,9 +409,9 @@ class PluginsIndex:
             if installed_dll.name == dll:
                 return True
         if settings['debug']:
-            debug(f"dll {libname} not installed. Installed dlls:")
-            for dll in installed_dlls:
-                debug("    ", dll)
+            debug(f">>>> {dll} not installed. Installed dlls:")
+            for dll in sorted(installed_dlls):
+                debug("    ", dll.name, dll)
         return False
 
     def find_plugin(self, plugin_name:str) -> Optional[Plugin]:
