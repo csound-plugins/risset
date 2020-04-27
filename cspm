@@ -479,7 +479,7 @@ class PluginsIndex:
         """
         Return the data dir corresponding to cspm
         """
-        return _data_dir_for_platform(self.platform) / "cspm"
+        return _data_dir_for_platform() / "cspm"
 
     def check_plugin_installed(self, plugin:Plugin) -> bool:
         return True
