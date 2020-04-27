@@ -71,6 +71,15 @@ def _plugin_extension() -> Optional[str]:
     }.get(sys.platform)
     return ext
 
+def _get_platform() -> str:
+    platform = {
+        'linux': 'linux',
+        'darwin': 'macos',
+        'win32': 'windows'
+    }.get(sys.platform)
+    if not platform:
+        raise SystemError("Platform {sys.platform} not supported")
+    return platform
 
 def _git_clone(repo:str, destination:Path) -> None:
     """
@@ -153,11 +162,11 @@ def _find_opcodes_dir(possible_dirs) -> Optional[Path]:
     return None
 
 
-def _data_dir_for_platform(platform: str=None):
+def _data_dir_for_platform():
     """
     Returns the data directory for the given platform
     """
-    platform = platform or sys.platform()
+    platform = sys.platform()
     if platform == 'linux':
         return Path(os.path.expanduser("~/.local/share"))
     elif platform == 'darwin':
@@ -352,7 +361,7 @@ class PluginsIndex:
     def __init__(self, version:str, plugins:List[Plugin]):
         self.version = version
         self.plugins = plugins
-        self.platform = sys.platform  # linux, darwin, win32
+        self.platform = _get_platform()  # linux, macos, windows
         self.csoundlib = "CsoundLib64"
         self.apiversion = "6.0"
         self.system_plugins_path: Path = self.get_system_plugins_path()
@@ -372,7 +381,7 @@ class PluginsIndex:
     def get_system_plugins_path(self) -> Optional[Path]:
         if self.platform == 'linux':
             possible_dirs = ["/usr/local/lib/csound/plugins64-6.0"]
-        elif self.platform == 'darwin':
+        elif self.platform == 'macos':
             # The path based on ~ is used when csound is compiled from source.
             # We give that priority since if a user is doing that, it is
             # probably someone who knows what she is doing
@@ -380,7 +389,7 @@ class PluginsIndex:
                 f"~/Library/Frameworks/{self.csoundlib}.framework/Versions/{self.apiversion}/Resources/Opcodes64",
                 f"/Library/Frameworks/{self.csoundlib}.framework/Versions/{self.apiversion}/Resources/Opcodes64",
             ]
-        elif self.platform == "win32":
+        elif self.platform == "windows":
             possible_dirs = ["C:\\Program Files\\Csound_x64\\plugins64"]
         else:
             return None
@@ -395,7 +404,7 @@ class PluginsIndex:
         return None
 
     def get_user_plugins_path(self) -> Optional[Path]:
-        data_dir = _data_dir_for_platform(self.platform)
+        data_dir = _data_dir_for_platform()
         return data_dir / "csound6/plugins64"
         
     def get_installed_dlls(self) -> List[Path]:
@@ -483,7 +492,10 @@ class PluginsIndex:
         """
         binary_definition = plugin.binaries.get(self.platform)
         if not binary_definition:
-            return None, ErrorMsg("No binary defined for the given platform")
+            defined_platforms = ", ".join(plugin.binaries.keys())
+            error = ErrorMsg(f"No binary defined for platform {self.platform}."
+                             f" Available platforms for {plugin.name}: {defined_platforms}")
+            return None, error
         if is_url(binary_definition.url):
             path, error = _download_file(binary_definition.url)
             if error:
@@ -517,7 +529,7 @@ class PluginsIndex:
         except IOError as e:
             debug(e)
             if sudo:
-                if self.platform == "linux" or self.platform == "darwin":
+                if self.platform == "linux" or self.platform == "macos":
                     _copy_with_sudo(plugin_dll, install_path)
                 else:
                     return ErrorMsg("Could not copy plugin to system folder")
@@ -620,16 +632,17 @@ def cmd_list(plugins_index:PluginsIndex, args):
     """
     Lists all plugins available for download
     """
+    # TODO: implement flags: --json, --output
     print("\n--- list ---\n")
     for plugin in plugins_index.plugins:
         installed_version = plugins_index.get_plugin_installed_version(plugin.name)
         if not installed_version:
-            status = "not installed"
+            status = ""
         elif installed_version == plugin.version or installed_version == UNKNOWN_VERSION:
-            status = "installed"
+            status = "[installed]"
         else:
             status = f"installed: {installed_version}"
-        print(f"* {plugin.name} @ {plugin.version} | {plugin.short_description} ({status})")
+        print(f"* {plugin.name}  @ {plugin.version} | {plugin.short_description} {status}")
     print()
 
 def cmd_install(plugins_index:PluginsIndex, args) -> bool:
@@ -692,6 +705,8 @@ subparsers = parser.add_subparsers()
 
 # List command
 list_group = subparsers.add_parser('list', help="List packages")
+list_group.add_argument("--json", action="store_true", help="Outputs list as json")
+list_group.add_argument("-o", "--outfile", help="Outputs to a file")
 list_group.set_defaults(func=cmd_list)
 
 # Install command
