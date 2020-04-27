@@ -372,8 +372,13 @@ class PluginsIndex:
         if self.platform == 'linux':
             possible_dirs = ["/usr/local/lib/csound/plugins64-6.0"]
         elif self.platform == 'darwin':
-            possible_dirs = [f"/Library/Frameworks/{self.csoundlib}.framework/Versions/{self.apiversion}/Resources/Opcodes64",
-                             f"~/Library/Frameworks/{self.csoundlib}.framework/Versions/{self.apiversion}/Resources/Opcodes64"]
+            # The path based on ~ is used when csound is compiled from source.
+            # We give that priority since if a user is doing that, it is
+            # probably someone who knows what she is doing
+            possible_dirs = [
+                f"~/Library/Frameworks/{self.csoundlib}.framework/Versions/{self.apiversion}/Resources/Opcodes64",
+                f"/Library/Frameworks/{self.csoundlib}.framework/Versions/{self.apiversion}/Resources/Opcodes64",
+            ]
         elif self.platform == "win32":
             possible_dirs = ["C:\\Program Files\\Csound_x64\\plugins64"]
         else:
@@ -381,6 +386,7 @@ class PluginsIndex:
         out = _find_opcodes_dir(possible_dirs)
         if out:
             return Path(out)
+        errormsg(f"System plugins path not found! Searched paths: {possible_dirs}")
         return None
 
     def get_user_plugins_path(self) -> Optional[Path]:
