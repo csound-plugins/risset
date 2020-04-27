@@ -1,0 +1,705 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+from dataclasses import dataclass
+from pathlib import Path
+import os
+# import re
+import sys
+from urllib.parse import urlparse
+import urllib.request
+import tempfile
+import shutil
+import subprocess
+import fnmatch
+from typing import List, Dict, Tuple, Union, Optional
+
+
+DEFAULT_INDEX = ""
+GIT_REPOSITORY = "https://github.com/csound-plugins/cpsm-data"
+
+settings = {
+    'debug': False
+}
+
+def debug(*msgs: str) -> None:
+    if settings['debug']:
+        print("DEBUG: ", *msgs, file=sys.stderr)
+
+
+def errormsg(s: str) -> None:
+    for line in s.splitlines():
+        print("** Error: ", line, file=sys.stderr)
+
+
+class ErrorMsg(str):
+    pass
+
+
+@dataclass
+class Binary:
+    platform: str
+    url: str
+    build_platform: str
+
+
+@dataclass
+class Plugin:
+    name: str
+    libname: str
+    version: str
+    short_description: str
+    csound_version: str
+    binaries: Dict[str, Binary]
+    opcodes: List[str]
+    author: str
+    email: str
+    long_description: str = ""
+    manual: str = ""
+    source: str = ""
+
+
+UNKNOWN_VERSION = "Unknown"
+
+
+def _plugin_extension() -> Optional[str]:
+    ext = {
+        'linux': '.so',
+        'darwin': '.dylib',
+        'win32': '.dll'
+    }.get(sys.platform)
+    return ext
+
+
+def _git_clone(repo:str, destination:Path) -> None:
+    """
+    Clone the given repository to the destination.
+    """
+    if not isinstance(destination, Path):
+        raise TypeError("destination should be a Path")
+    if not destination.is_absolute():
+        raise ValueError("Destination should be an absolute path")
+    if destination.exists():
+        raise OSError("Destination path already exists, can't clone git repository")
+    gitbin = shutil.which("git")
+    if not gitbin:
+        raise OSError("Could not find git binary. Is it in the path?")
+    parent = destination.parent
+    if not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
+    subprocess.call([gitbin, "clone", repo, str(destination)])
+    # check the repository
+    indexfile = destination / "plugins.json"
+    if not indexfile.exists():
+        raise RuntimeError("Git repository was not cloned properly,"
+                           " can't find plugins.json file")
+
+
+def _git_update(repopath:Path):
+    debug(f"Updating git repository: {repopath}")
+    if not repopath.exists():
+        raise OSError(f"Can't find path to git repository {repopath}")
+    gitbin = shutil.which("git")
+    if not gitbin:
+        raise OSError("Could not find git binary. Is it in the path?")
+    os.chdir(repopath)
+    subprocess.call([gitbin, "pull"])
+
+
+def _copy_with_sudo(src, dst):
+    debug(f"(sudo) Copying {src} -> {dst} ")
+    subprocess.call(["sudo", "cp", src, dst])
+
+
+def version_tuplet(versionstr:str) -> Tuple[int, int, int]:
+    if not versionstr:
+        raise ValueError("versionstr is empty")
+    parts = versionstr.split(".")
+    try:
+        ints = [int(part) for part in parts]
+    except ValueError:
+        raise ValueError(f"Could not parse version {versionstr}")
+        
+    if len(ints) == 1:
+        ints += [0, 0]
+    elif len(ints) == 2:
+        ints.append(0)
+    elif len(ints) > 3:
+        debug("Too many version parts (max. 3), using the first 3")
+        ints = ints[:3]
+    return ints
+    
+
+def _find_opcodes_dir(possible_dirs) -> Optional[str]:
+    """
+    Given a list of possible paths, find the folder where
+    the system plugins are installed
+    """
+    ext = _plugin_extension() 
+    debug("Finding opcodes dir: ")   
+    for d in possible_dirs:
+        debug("   looking at ", d)
+        path = Path(d).expanduser()
+        if not path.is_dir() or not path.exists():
+            continue
+        plugins = list(path.glob("*" + ext))
+        if not plugins:
+            continue
+        rtpa = "librtpa" + ext
+        if any(plugin for plugin in plugins if rtpa == plugin.name):
+            return d
+    return None
+
+
+def _data_dir_for_platform(platform: str=None):
+    """
+    Returns the data directory for the given platform
+    """
+    platform = platform or sys.platform()
+    if platform == 'linux':
+        return Path(os.path.expanduser("~/.local/share"))
+    elif platform == 'darwin':
+        return Path(os.path.expanduser("~/Libary/Application Support"))
+    elif platform == 'win32':
+        p = R"C:\Users\$USERNAME\AppData\Local"
+        return Path(os.path.expandvars(p))
+    else:
+        raise ValueError(f"Platform unknown: {platform}")
+
+
+def _download_file(url:str, outpath:str=None) -> Tuple[Path, ErrorMsg]:
+    if outpath:
+        ext = os.path.splitext(outpath)[1]
+    else:
+        ext = os.path.splitext(url)[1]
+    with urllib.request.urlopen(url) as response:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as outfile: 
+            shutil.copyfileobj(response, outfile)
+            if outpath:
+                shutil.move(outfile.name, outpath)
+                return Path(outpath), None
+            else:
+                XXX
+
+def is_url(value:str) -> bool:
+    """
+    Return whether or not given value is a valid URL.
+    Args:
+        value: URL address string to validate
+    """
+    result = urlparse(str(value))
+    return result.scheme and result.netloc
+
+
+def _parse_pluginkey(pluginkey: str) -> Tuple[str, str]:
+    """
+    Given a key pluginname@version, return (pluginname, version)
+    Handle cases where the pluginkey has no version
+    """
+    if "@" in pluginkey:
+        name, version = pluginkey.split("@")
+    else:
+        name = pluginkey
+        version = "0.0.0"
+    return name, version
+
+
+class PluginDefinitionError(Exception):
+    pass
+
+
+def _normalize_version(version: str, default="0.0.0") -> str:
+    try:
+        versiontup = version_tuplet(version)
+    except ValueError as e:
+        debug(f"Error while parsing version {version}: %s", str(e))
+        return default
+    return ".".join(str(i) for i in versiontup)
+    
+
+def _parse_binary(platform:str, binary_definition:dict) -> Union[Binary, ErrorMsg]:
+    url = binary_definition.get('url')
+    if not url:
+        return ErrorMsg(f"Plugin definition for {platform} should have an url")
+    build_platform = binary_definition.get('build_platform')
+    if not build_platform:
+        return ErrorMsg(f"Plugin definition for {platform} should have a build_platform")
+    return Binary(platform=platform, url=url, build_platform=build_platform)
+
+
+def _plugin_from_dict(d: dict) -> Plugin:
+    def get_key(key):
+        value = d.get(key)
+        if value is None:
+            raise PluginDefinitionError(f"Plugin has no {key} key")
+        return value
+
+    version = _normalize_version(get_key('version'))
+    binariesd = get_key('binaries')
+    results = [_parse_binary(platform, binary_definition)
+               for platform, binary_definition in binariesd.items()]
+
+    binaries = {}
+    for result in results:
+        if isinstance(result, ErrorMsg):
+            errormsg(result)
+        else:
+            binaries[result.platform] = result
+    
+    if not binaries:
+        raise PluginDefinitionError("No valid binaries defined")
+    return Plugin(
+        name=get_key('name'),
+        libname=get_key('libname'),
+        version=version,
+        short_description=get_key('short_description'),
+        author=get_key('author'),
+        email=get_key('email'),
+        csound_version=get_key('csound_version'),
+        opcodes=get_key('opcodes'),
+        binaries=binaries,
+        manual=d.get('manual', ''),
+        long_description=d.get('long_description', ''),
+    )
+
+def resolve_path(filepath: str, cwd:str=None) -> Path:
+    """
+    If filepath is relative, use cwd as base to convert it
+    to an absolute path. If cwd is not given, use the current 
+    working dir
+    """
+    p = Path(filepath)
+    if p.is_absolute():
+        return p.resolve()
+    if cwd is None:
+        cwd = Path.cwd()
+    else:
+        cwd = Path(cwd)
+    return (cwd / p).resolve()
+
+def plugin_definition_from_file(filepath: str, 
+                                indexfolder:str=""
+                                ) -> Tuple[Plugin, ErrorMsg]:
+    """
+    Args:
+
+        filepath: if relative, it is relative to the index file
+        indexpath: the path where the plugins.json file is (a folder). If the index
+            file is a url, then this should be empty
+
+    Returns:
+        either a Plugin, or an ErrorMsg
+
+    Raises PluginDefinitionError if the .json definitionis invalid
+    """
+    if not filepath.startswith("/"):
+        if not indexfolder:
+            # filepath is relative and no indexfolder, this is an error
+            return None, ErrorMsg("filepath can't be relative becaus no index folder was given")
+        if not os.path.isdir(indexfolder):
+            return None, ErrorMsg("index folder should be a foler")
+        if not os.path.exists(indexfolder):
+            return None, ErrorMsg("index folder does not exist")
+        path = resolve_path(filepath, indexfolder)
+    else:
+        # absolute path
+        path = Path(filepath).resolve()
+
+    if not path.exists():
+        return None, ErrorMsg(f"plugin definition file ({path}) not found")
+
+    assert path.suffix == ".json", "Plugin definition file should be a .json file"
+
+    debug(f"Parsing {path}")
+    d = json.load(open(path))
+    try:
+        plugin = _plugin_from_dict(d)
+        plugin.source = str(path)
+    except PluginDefinitionError as e:
+        raise e
+
+    return plugin, None
+
+
+def plugin_definition_from_url(url) -> Tuple[Plugin, ErrorMsg]:
+    raise RuntimeError("urls are not yet supported")
+
+
+def _load_url(url:str) -> str:
+    debug(f"Parsing url: {url}")
+    with urllib.request.urlopen(url) as response:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            shutil.copyfileobj(response, tmp_file)
+            text = open(tmp_file.name).read()
+            return text
+
+
+def load_text(file_or_url:str) -> str:
+    if is_url(file_or_url):
+        return _load_url(file_or_url)
+    assert os.path.exists(file_or_url)
+    text = open(file_or_url).read()
+    debug(f"load_text: {text}")
+    if not text:
+        debug("load_text: empty file")
+    return text
+
+
+class PluginsIndex:
+
+    def __init__(self, version:str, plugins:List[Plugin]):
+        self.version = version
+        self.plugins = plugins
+        self.platform = sys.platform  # linux, darwin, win32
+        self.csoundlib = "CsoundLib64"
+        self.apiversion = "6.0"
+        self.system_plugins_path: Path = self.get_system_plugins_path()
+        debug(f"System plugins path: {self.system_plugins_path}")
+        self.user_plugins_path = self.get_user_plugins_path()
+
+    def user_plugins_path_is_set(self) -> bool:
+        """
+        Returns True if the user has already set the user_plugins_path 
+        """
+        opcode6dir64 = os.getenv("OPCODE6DIR64")
+        if not opcode6dir64:
+            return False
+        return (self.user_plugins_path in opcode6dir64.split(":") and 
+                self.user_plugins_path.exists())
+        
+    def get_system_plugins_path(self) -> Optional[Path]:
+        if self.platform == 'linux':
+            possible_dirs = ["/usr/local/lib/csound/plugins64-6.0"]
+        elif self.platform == 'darwin':
+            possible_dirs = [f"/Library/Frameworks/{self.csoundlib}.framework/Versions/{self.apiversion}/Resources/Opcodes64",
+                             f"~/Library/Frameworks/{self.csoundlib}.framework/Versions/{self.apiversion}/Resources/Opcodes64"]
+        elif self.platform == "win32":
+            possible_dirs = ["C:\\Program Files\\Csound_x64\\plugins64"]
+        else:
+            return None
+        out = _find_opcodes_dir(possible_dirs)
+        if out:
+            return Path(out)
+        return None
+
+    def get_user_plugins_path(self) -> Optional[Path]:
+        data_dir = _data_dir_for_platform(self.platform)
+        return data_dir / "csound6/plugins64"
+        
+    def get_installed_dlls(self) -> List[Path]:
+        """
+        Returns a list of dlls installed in this system
+        """
+        ext = _plugin_extension()
+        all_plugins = []
+        if self.system_plugins_path:
+            system_plugins = self.system_plugins_path.glob("*" + ext)
+            all_plugins.extend(system_plugins)
+        if self.user_plugins_path_is_set():
+            user_plugins = self.user_plugins_path.glob("*" + ext)
+            if user_plugins:
+                all_plugins.extend(user_plugins)
+        return all_plugins
+
+    def is_dll_installed(self, libname:str) -> bool:
+        installed_dlls = self.get_installed_dlls()
+        dll = libname + _plugin_extension()
+        return any(installed_dll.name == dll for installed_dll in installed_dlls)
+
+    def find_plugin(self, plugin_name:str) -> Optional[Plugin]:
+        for plugin in self.plugins:
+            if plugin.name == plugin_name:
+                return plugin
+        return None
+
+    def get_plugin_installed_version(self, plugin_name: str) -> Optional[str]:
+        """
+        Check if the dll is installed, return its version
+
+        Returns None if the dll is not installed, UNKNOWN_VERSION if the
+        dll is installed but there is no corresponding installation
+        manifest (it was not installed via cspm)
+        """
+        plugin = self.find_plugin(plugin_name)
+        debug(f"Checking if plugin {plugin_name} is installed")
+        if not plugin:
+            raise KeyError(f"Plugin {plugin_name} unknown")
+        elif not self.is_dll_installed(plugin.libname):
+            debug(f"dll for plugin {plugin_name} not installed yet")
+            return None
+
+        installed_manifests = self.get_installed_manifests()
+        for manifest in installed_manifests:
+            pluginkey = os.path.splitext(manifest.name)[0]
+            name, version = _parse_pluginkey(pluginkey)
+            if name == plugin_name:
+                return version
+        return UNKNOWN_VERSION
+
+    def get_installed_manifests(self) -> List[Path]:
+        """
+        Return a list of all installed manifests
+        """
+        path = self.get_installed_manifests_path()
+        manifests = list(path.glob("*.cspm.json"))
+        return manifests
+
+    def get_installed_manifests_path(self) -> Path:
+        return self.get_data_dir() / "installed_plugins"
+
+    def get_data_dir(self) -> Path:
+        """
+        Return the data dir corresponding to cspm
+        """
+        return _data_dir_for_platform(self.platform) / "cspm"
+
+    def check_plugin_installed(self, plugin:Plugin) -> bool:
+        return True
+
+    def get_plugin_dll(self, plugin:Plugin) -> Tuple[Path, ErrorMsg]:
+        """
+        If the dll is a local file, just returns the absolute path,
+        otherwise it downloads the binary to a temporary file and
+        returns that path
+        """
+        binary_definition = plugin.binaries.get(self.platform)
+        if not binary_definition:
+            return None, ErrorMsg("No binary defined for the given platform")
+        if is_url(binary_definition.url):
+            path, error = _download_file(binary_definition.url)
+            if error:
+                return None, ErrorMsg(f"Error downloading binary: {error}")
+        else:
+            # The manifest defines a path. If it is relative, it is relative to the
+            # manifest itself.
+            path = resolve_path(binary_definition.url, Path(plugin.source).parent)
+            if not path.exists():
+                return None, ErrorMsg(f"Binary not found. Given path was: {str(path)}")
+            return path, None
+
+    def install_plugin(self, plugin: Plugin, user=False) -> Optional[ErrorMsg]:
+        """
+        Install the given plugin. Returns None if ok,
+        an ErrorMsg if failed
+        """
+        debug("Installing plugin: ", plugin.name)
+        if user:
+            install_path = self.user_plugins_path
+            sudo = False
+        else:
+            install_path = self.system_plugins_path
+            sudo = True
+        plugin_dll, error = self.get_plugin_dll(plugin)
+        if error:
+            errormsg(error)
+            return ErrorMsg(f"Could not find a binary for the given plugin: {error}")
+        try:
+            shutil.copy(plugin_dll, install_path)
+        except IOError as e:
+            debug(e)
+            if sudo:
+                if self.platform == "linux" or self.platform == "darwin":
+                    _copy_with_sudo(plugin_dll, install_path)
+                else:
+                    return ErrorMsg("Could not copy plugin to system folder")
+            else:
+                return ErrorMsg("Could not copy the binary to the install path")
+        
+
+class IndexParser:
+    def __init__(self, git=True, index:str=""):
+        """
+        Create an index parser. There are two working modes. In the first one,
+        git is False and the user gives the path to a plugins.json file 
+        or, if nothing is given, uses the default url to the plugins.json file.
+        In the second mode (git=True), a git repo is cloned/updated and the index
+        defined in it is used. In this second mode all files are accesses localy
+        after cloning and all paths are relative to the repo
+
+        Args
+            index: the path to the plugins.json file. If not given, a default 
+                url is used
+            git: if True, we run in git mode. In this mode, index and binaries are
+                accessed by cloning a git repository. In this case, index is not
+                used 
+        """
+        self.git = git
+        if git:
+            self.update_git_repository()
+            self.index_is_url = False
+            self.index_folder: Path = self._get_path_of_git_repository()
+            self.index: Path = self.index_folder / "plugins.json"
+            assert self.index.exists()
+        else:
+            self.index = index
+            self.index_is_url = is_url(index)
+            if not self.index_is_url:
+                index_folder, index_file = os.path.split(index)
+                assert index_file == "plugins.json"
+            else:
+                index_folder = None
+            self.index_folder = index_folder
+
+    def _get_path_of_git_repository(self) -> Path:
+        if sys.platform == 'linux':
+            return Path("~/.local/share/cspm/cspm-data").expanduser()
+        elif sys.platform == 'macos':
+            return Path("~/Library/Application Support/cspm/cspm-data").expanduser()
+        elif sys.platform == 'win32':
+            return Path(R"C:\Users\$USERNAME\AppData\Local\cspm\cspm-data").expandvars()
+        else:
+            raise RuntimeError(f"Platform {sys.platform} not supported")
+
+    def update_git_repository(self):
+        gitpath = self._get_path_of_git_repository()
+        if not gitpath.exists():
+            _git_clone(GIT_REPOSITORY, gitpath)
+        else:
+            _git_update(gitpath)
+
+    def parse(self) -> PluginsIndex:
+        index_text = load_text(self.index)
+        return self._parse_index(index_text)
+
+    def _parse_index(self, indexstr: str) -> PluginsIndex:
+        """
+        Parses the content of the plugins.json file
+
+        Args:
+            indexstr: the result of reading the plugins.json file
+        """
+        debug(f"Parsing index text: \n{indexstr}")
+        try:
+            d = json.loads(indexstr)
+        except json.JSONDecodeError as e:
+            debug("---- Could not parse index ----")
+            debug(f"---- Index: \n{indexstr}")
+            raise e
+
+        # Check that it is a valid index (see DESIGN.md)
+        plugins: Dict[str, str] = d.get('plugins')
+        if plugins is None:
+            raise ValueError("The plugins index does not have a 'plugins' key.")
+
+        plugin_definitions: List[Plugin] = []
+        for pluginkey, url in plugins.items():
+            plugin_name, version = _parse_pluginkey(pluginkey)
+            if is_url(url):
+                plugin_definition, error = plugin_definition_from_url(url)
+            else:
+                plugin_definition, error = plugin_definition_from_file(url, self.index_folder)
+            if error:
+                errormsg(f"Error parsing plugin {pluginkey}: {error}")
+                continue
+            plugin_definitions.append(plugin_definition)
+        index_version = d.get('version', '0.0.0')
+        return PluginsIndex(version=index_version, plugins=plugin_definitions)
+
+# Subcommands
+
+def cmd_list(plugins_index:PluginsIndex, args):
+    """
+    Lists all plugins available for download
+    """
+    print("\n--- list ---\n")
+    for plugin in plugins_index.plugins:
+        installed_version = plugins_index.get_plugin_installed_version(plugin.name)
+        if not installed_version:
+            status = "not installed"
+        elif installed_version == plugin.version or installed_version == UNKNOWN_VERSION:
+            status = "installed"
+        else:
+            status = f"installed: {installed_version}"
+        print(f"* {plugin.name} @ {plugin.version} | {plugin.short_description} ({status})")
+    print()
+
+def cmd_install(plugins_index:PluginsIndex, args) -> bool:
+    """
+    Install or upgrade a plugin
+
+    If the plugin is installed but with a prior version, it will
+    be upgraded. If it is installed but with an unknown version,
+    installation is only performed if the --force flag is given
+
+    Returns True if success
+
+    Flags:
+        --user   - install in user folder
+        --force  - force installation even if plugin is already installed
+
+    Args:
+        plugin   - name of the plugin to install
+    """
+    plugins = args.plugin
+    errors = []
+    for plugin in plugins:
+        plugin_definition = plugins_index.find_plugin(plugin)
+        if plugin_definition is None:
+            errormsg(f"Plugin {plugin} unknown")
+            return False
+        current_version = plugins_index.get_plugin_installed_version(plugin)
+        if current_version == UNKNOWN_VERSION:
+            # plugin is installed but without a corresponding install manifest.
+            if not args.force:
+                errors.append("Plugin {plugin.name} is already installed. Use --force to force reinstall")
+                errormsg(errors[-1])
+                continue
+        elif current_version is None:
+            # plugin is not installed
+            debug(f"Plugin {plugin} not installed, installing")
+        else:
+            if version_tuplet(plugin_definition.version) <= version_tuplet(current_version):
+                debug(f"Plugin {plugin_definition.name}, version: {plugin_definition.version}")
+                debug(f"    Installed version: {current_version}")
+                errors.append(f"Installed version of plugin {plugin} is up-to-date")
+                errormsg(errors[-1])
+                continue
+            debug(f"Updating plugin {args.plugin}: "
+                  f"{current_version} -> {plugin_definition.version}")
+        error = plugins_index.install_plugin(plugin_definition, user=args.user)
+        if error:
+            errors.append(error)
+            errormsg(error)
+    if errors:
+        return False
+    return True
+    
+
+# Main parser
+parser = argparse.ArgumentParser()
+parser.add_argument("--index", default="")
+parser.add_argument("--debug", action="store_true", help="Print debug information")
+subparsers = parser.add_subparsers()
+
+# List command
+list_group = subparsers.add_parser('list', help="List packages")
+list_group.set_defaults(func=cmd_list)
+
+# Install command
+install_group = subparsers.add_parser("install", help="Install a package")
+install_group.add_argument("--user", action="store_true", help="Install in user folder")
+install_group.add_argument("--force", action="store_true", help="Force install/reinstall")
+install_group.add_argument("plugin", nargs="+", help="Name of the plugin/plugins to install")
+install_group.set_defaults(func=cmd_install) 
+
+args = parser.parse_args()
+if args.debug:
+    settings['debug'] = True
+
+plugins_index = args.index
+if plugins_index == "default":
+    plugins_index = DEFAULT_INDEX
+
+if args.index:
+    git = False
+    debug("Using backend: index")
+else:
+    git = True
+    debug("Using backend: git")
+
+index_parser = IndexParser(index=plugins_index, git=git)
+plugins_index = index_parser.parse()
+ok = args.func(plugins_index, args)
+if not ok:
+    sys.exit(-1)
