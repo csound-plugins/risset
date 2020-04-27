@@ -405,7 +405,14 @@ class PluginsIndex:
     def is_dll_installed(self, libname:str) -> bool:
         installed_dlls = self.get_installed_dlls()
         dll = libname + _plugin_extension()
-        return any(installed_dll.name == dll for installed_dll in installed_dlls)
+        for installed_dll in installed_dlls:
+            if installed_dll.name == dll:
+                return True
+        if settings['debug']:
+            debug(f"dll {libname} not installed. Installed dlls:")
+            for dll in installed_dlls:
+                debug("    ", dll)
+        return False
 
     def find_plugin(self, plugin_name:str) -> Optional[Plugin]:
         for plugin in self.plugins:
