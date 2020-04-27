@@ -166,7 +166,7 @@ def _data_dir_for_platform():
     """
     Returns the data directory for the given platform
     """
-    platform = sys.platform()
+    platform = sys.platform
     if platform == 'linux':
         return Path(os.path.expanduser("~/.local/share"))
     elif platform == 'darwin':
