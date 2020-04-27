@@ -544,7 +544,7 @@ class IndexParser:
     def _get_path_of_git_repository(self) -> Path:
         if sys.platform == 'linux':
             return Path("~/.local/share/cspm/cspm-data").expanduser()
-        elif sys.platform == 'macos':
+        elif sys.platform == 'darwin':
             return Path("~/Library/Application Support/cspm/cspm-data").expanduser()
         elif sys.platform == 'win32':
             return Path(R"C:\Users\$USERNAME\AppData\Local\cspm\cspm-data").expandvars()
