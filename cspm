@@ -873,7 +873,7 @@ def cmd_list(plugins_index:PluginsIndex, args):
 
 def cmd_show(plugins_index: PluginsIndex, args) -> bool:
     plugin = args.plugin
-    plugdef = plugins_index.find_plugin(plugin)u
+    plugdef = plugins_index.find_plugin(plugin)
     if plugdef is None:
         errormsg(f"Plugin {plugin} unknown")
     installed_str = plugdef.version or "not installed"
@@ -890,7 +890,6 @@ def cmd_show(plugins_index: PluginsIndex, args) -> bool:
     opcstrs = textwrap.wrap(", ".join(plugdef.opcodes), 50)
     for s in opcstrs:
         print(" "*12, s)
-
     print()
 
 def cmd_rm(plugins_index:PluginsIndex, args) -> bool:
@@ -925,9 +924,9 @@ def cmd_rm(plugins_index:PluginsIndex, args) -> bool:
                 else:
                     removed=True
         if removed:
-            manifest_path = info.installed_manifest_path()
+            manifest_path = info.installed_manifest_path
             if manifest_path and manifest_path.exists():
-                os.remove(manifest_path)
+                os.remove(manifest_path.as_posix())
 
     if not errors:
         return True
