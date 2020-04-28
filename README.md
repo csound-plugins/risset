@@ -137,12 +137,14 @@ a binary for the given platform in the manifest.json file.
 
 All plugins are aggregated in a plugins.json file, with the format
 
+```json
 {
     "plugins": {
         "plugin_name@version": "manifest_url",
         ...    
     }
 }
+```
 
 * `plugin_name` corresponds to the name in the manifest
 * `version` corresponds to the version in the manifest
