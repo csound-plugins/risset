@@ -669,7 +669,7 @@ class PluginsIndex:
         return manifests
 
     def get_installed_manifests_path(self) -> Path:
-        return self.get_data_dir() / "installed_plugins"
+        return self.get_data_dir() / "installed/manifests"
         
     def get_data_dir(self) -> Path:
         """
@@ -745,7 +745,7 @@ class PluginsIndex:
             manifests_path.mkdir(parents=True)
         manifest = dataclasses.asdict(plugin)
         manifest['build_platform'] = plugin.binaries[self.platform].build_platform
-        manifest_path = manifests_path / f"{plugin.name}.risset.json"
+        manifest_path = manifests_path / f"{plugin.name}.json"
         try:
             manifest_json = json.dumps(manifest, indent=True)
         except Exception as e:
@@ -762,7 +762,8 @@ class PluginsIndex:
         Given a glob pattern, match it against known plugins. Returns
         a list of matched plugins (the list might be empty)
         """
-        return [fnmatch.fnmatch(plugin.name, pattern) for plugin in self.plugins]
+        return [plugin.name for plugin in self.plugins
+                if fnmatch.fnmatch(plugin.name, pattern)]
 
 
 class IndexParser:
