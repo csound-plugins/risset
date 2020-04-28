@@ -1,3 +1,28 @@
+# cspm: Csound Package Manager
+
+This is the repository of cspm, a package manager for csound external
+plugins and user-defined-opcodes
+
+# Installation
+
+```bash
+pip3 install cspm
+```
+
+or via git:
+
+```bash
+git clone https://github.com/csound-plugins/cspm
+cd cspm
+python3 setup.py install
+```
+
+# Usage
+
+TODO
+
+-----
+
 # Format
 
 ## Plugin / UDO
@@ -14,43 +39,45 @@ should be cspm.manifest.json
 
 ```json
 {
-    'name': 'name_of_the_plugin',
-    'libname': 'name_of_the_shared_library',
-    'version': 'major.minor.patch',
-    'short_description': 'a short description',
-    'long_description'?: 'a long description',
-    'csound_version': 'minimal_csound_version',
-    'binaries': {
-        'linux': {
-            'url': 'download_url',
-            'build_platform': 'major.minor.patch'
+    "name": "name_of_the_plugin",
+    "libname": "name_of_the_shared_library",
+    "version": "major.minor.patch",
+    "short_description": "a short description",
+    "long_description"?: "a long description",
+    "csound_version": "minimal_csound_version",
+    "binaries": {
+        "linux": {
+            "url": "download_url",
+            "build_platform": "major.minor.patch",
+            "extra_binaries": ["lib1.so", "lib2.so"]
         }, 
-        'macos': {
-            'url': 'download_url',
-            'build_platform': ...
+        "macos": {
+            "url": "download_url",
+            "build_platform": ...
         },
-        'windows': ... 
+        "windows": ... 
     },
-    'manual': 'manual_zip_download_url',
-    'opcodes': ['foo', 'bar', 'baz'],
-    'author': 'author_of_the_plugin',
-    'email': 'email_of_the_author',
+    "manual": "manual_zip_download_url",
+    "opcodes": ["foo", "bar", "baz"],
+    "author": "author_of_the_plugin",
+    "email": "email_of_the_author",
+    "repository": "url_to_were_the_source_is_developed"
 }
 ```
 
 #### Explanation of each term
 
-* `name`: name of the plugin. For example, 'chaoticoscils'. This name must be unique
+* `name`: name of the plugin. For example, "chaoticoscils". This name must be unique
 * `libname`: the name of the shared library, without extension (example: `libchaoticoscils`). 
     This is used to check if the plugin is installed.
 * `version`: a version string indicating the version of this binaries
 * `short_description`: "A series of chaotic oscillators / noise generators"
 * `long_description` (optional): "A longer description of what these opcodes do"
 * `csound_version`: The minial version of csound needed to run these opcodes. Example "6.14.0" (a string)
-* `binaries`: A dictionary with platform as keys. Possible platforms: 'linux', 'macos', 'windows'. 
-    The value for each entry should is itself a dictionary of the form {'url': str, 'version': str}. 
-    * `url` is a downloadable url pointing to the shared library itself (.so, .dll, ,dylib), or a .zip
-        file containing the plugin library plus any other needed libraries
+* `binaries`: A dictionary with platform as keys. Possible platforms: "linux", "macos", "windows". 
+    The value for each entry should is itself a dictionary of the form {"url": str, "version": str}. 
+    * `url` is a downloadable url pointing to the shared library itself (.so, .dll, ,dylib)
+    * `extra_binaries` is an optional field holding an array of other binaries needed
     * `build_platform` is a string identifying the platform used to build the binary
 * `manual`: A url to a .zip file holding one .md file for each opcode defined plus any number of 
     example files, resources (soundfiles, images), etc.
@@ -69,8 +96,8 @@ a binary for the given platform in the manifest.json file.
 All plugins are aggregated in a plugins.json file, with the format
 
 {
-    'plugins': {
-        'plugin_name@version': 'manifest_url',
+    "plugins": {
+        "plugin_name@version": "manifest_url",
         ...    
     }
 }
@@ -103,7 +130,7 @@ Install a given plugin for the current platform. Plugins are installed into
 OPCODES6DIR64 if defined. Otherwise they are installed into a proposed folder
 and a hint is printed to define that folder as OPCODES6DIR64. Specifically plugins
 should NOT be installed in system folders and should be accessible without any
-administrator's rights. 
+administrator"s rights. 
 
 
 * linux: $HOME/.local/share/csound6/plugins64
