@@ -7,11 +7,11 @@ long_description = """
 """
 
 setup(
-    name = "cspm",
+    name = "risset",
     version = "0.0.1",
-    description = "Csound Package Manager",
+    description = "A package manager for csound",
     author = "Eduardo Moguillansky",
     long_description = long_description,
     long_description_content_type='text/markdown',
-    scripts=['cspm']    
+    scripts=['risset']    
 )

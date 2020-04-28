@@ -13,13 +13,12 @@ import tempfile
 import shutil
 import subprocess
 import textwrap
-
-# import fnmatch
+import fnmatch
 from typing import List, Dict, Tuple, Union, Optional
 
 
 DEFAULT_INDEX = ""
-GIT_REPOSITORY = "https://github.com/csound-plugins/cpsm-data"
+GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
 settings = {
     'debug': False
@@ -172,7 +171,6 @@ def _git_update(repopath:Path):
 
 def _copy_with_sudo(src: str, dst: str) -> Optional[ErrorMsg]:
     debug(f"(sudo) Copying {src} -> {dst} ")
-    print(f"\n  Administrator rights are needed to write to {dst}\n")
     try:
         subprocess.call(["sudo", "cp", src, dst])
     except KeyboardInterrupt:
@@ -591,7 +589,7 @@ class PluginsIndex:
         Returns (path to dll, user_installed)
         If not installed returns (None, False)
 
-    lllll    A user installed dll has priority over system installed
+        A user installed dll has priority over system installed
         """
         dll = libname + _plugin_extension()
         user_dlls = self.get_user_installed_dlls()
@@ -652,7 +650,7 @@ class PluginsIndex:
 
         Returns None if the dll is not installed, UNKNOWN_VERSION if the
         dll is installed but there is no corresponding installation
-        manifest (it was not installed via cspm)
+        manifest (it was not installed via risset)
         """
         info = self.get_installed_plugin_info(plugin_name)
         if not info:
@@ -675,9 +673,9 @@ class PluginsIndex:
         
     def get_data_dir(self) -> Path:
         """
-        Return the data dir corresponding to cspm
+        Return the data dir corresponding to risset
         """
-        return _data_dir_for_platform() / "cspm"
+        return _data_dir_for_platform() / "risset"
 
     def check_plugin_installed(self, plugin:Plugin) -> bool:
         return True
@@ -747,7 +745,7 @@ class PluginsIndex:
             manifests_path.mkdir(parents=True)
         manifest = dataclasses.asdict(plugin)
         manifest['build_platform'] = plugin.binaries[self.platform].build_platform
-        manifest_path = manifests_path / f"{plugin.name}.cspm.json"
+        manifest_path = manifests_path / f"{plugin.name}.risset.json"
         try:
             manifest_json = json.dumps(manifest, indent=True)
         except Exception as e:
@@ -758,7 +756,14 @@ class PluginsIndex:
             f.write(manifest_json)
         debug(f"Saved manifest to {manifest_path}")
         debug(manifest_json)
-        
+
+    def expand_plugin_glob(self, pattern) -> List[str]:
+        """
+        Given a glob pattern, match it against known plugins. Returns
+        a list of matched plugins (the list might be empty)
+        """
+        return [fnmatch.fnmatch(plugin.name, pattern) for plugin in self.plugins]
+
 
 class IndexParser:
     def __init__(self, git=True, index:str=""):
@@ -768,7 +773,8 @@ class IndexParser:
         or, if nothing is given, uses the default url to the plugins.json file.
         In the second mode (git=True), a git repo is cloned/updated and the index
         defined in it is used. In this second mode all files are accesses localy
-        after cloning and all paths are relative to the repo
+        after cloning and all paths are relative to the repo.
+        At the moment only git mode is working
 
         Args
             index: the path to the plugins.json file. If not given, a default 
@@ -796,11 +802,11 @@ class IndexParser:
 
     def _get_path_of_git_repository(self) -> Path:
         if sys.platform == 'linux':
-            return Path("~/.local/share/cspm/cspm-data").expanduser()
+            return Path("~/.local/share/risset/risset-data").expanduser()
         elif sys.platform == 'darwin':
-            return Path("~/Library/Application Support/cspm/cspm-data").expanduser()
+            return Path("~/Library/Application Support/risset/risset-data").expanduser()
         elif sys.platform == 'win32':
-            return Path(R"C:\Users\$USERNAME\AppData\Local\cspm\cspm-data").expandvars()
+            return Path(R"C:\Users\$USERNAME\AppData\Local\risset\risset-data").expandvars()
         else:
             raise RuntimeError(f"Platform {sys.platform} not supported")
 
@@ -848,7 +854,10 @@ class IndexParser:
         index_version = d.get('version', '0.0.0')
         return PluginsIndex(version=index_version, plugins=plugin_definitions)
 
-# Subcommands
+
+###############################################################
+#                        Subcommands                          #
+###############################################################
 
 def cmd_list(plugins_index:PluginsIndex, args):
     """
@@ -862,7 +871,7 @@ def cmd_list(plugins_index:PluginsIndex, args):
             status = ""
         else:
             if info.versionstr == UNKNOWN_VERSION:
-                status = "[installed (not by cspm)]"
+                status = "[installed (not by risset)]"
             else:
                 status = f"[installed: {info.versionstr}]"
             if not info.installed_in_system_folder:
@@ -953,9 +962,14 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
     Args:
         plugin   - name of the plugin to install
     """
-    plugins = args.plugin
+    allplugins = []
+    for pattern in args.plugins:
+        matched = plugins_index.expand_plugin_glob(pattern)
+        if matched:
+            allplugins.extend(matched)
     errors = []
-    for plugin in plugins:
+    allplugins = list(set(allplugins))  # remove duplicates
+    for plugin in allplugins:
         plugin_definition = plugins_index.find_plugin(plugin)
         if plugin_definition is None:
             errormsg(f"Plugin {plugin} unknown")
@@ -1004,7 +1018,9 @@ list_group.set_defaults(func=cmd_list)
 install_group = subparsers.add_parser("install", help="Install a package")
 install_group.add_argument("--user", action="store_true", help="Install in user folder")
 install_group.add_argument("--force", action="store_true", help="Force install/reinstall")
-install_group.add_argument("plugin", nargs="+", help="Name of the plugin/plugins to install")
+install_group.add_argument("plugins", nargs="+",
+                           help="Name of the plugin/plugins to install. "
+                                "Glob pattern are supported (enclose them inside quotation marks)")
 install_group.set_defaults(func=cmd_install)
 
 # remove command
@@ -1038,7 +1054,6 @@ plugins_index = index_parser.parse()
 if not args.command:
     parser.print_help()
     sys.exit(-1)
-
 
 ok = args.func(plugins_index, args)
 if not ok:
