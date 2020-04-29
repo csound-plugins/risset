@@ -6,6 +6,9 @@ repository at [risset-data](https://github.com/csound-plugins/risset-data)
 
 # Installation
 
+`risset` depends only on `git` and `python3` (>= 3.6) being installed. For linux this is 
+already the case, for macos and windows both need to be installed.
+
 ```bash
 pip3 install risset
 ```
@@ -143,21 +146,15 @@ It is desirable, but not a requirement, that all opcodes support the three major
 platforms: linux, macos and windows. Support for a given platform is indicated by the availability of
 a binary for the given platform in the manifest.json file.
 
-# Implementation
-
 ## risset.py
 
 A python script implementing installation of plugins
 
-### Commands
+#### Commands
 
-#### risset list
-
-Lists all known plugins
-
-#### risset show <plugin>
-
-Show information about a plugin
+* risset list: Lists all known plugins
+* risset remove <plugin>
+* risset show <plugin> : Show information about a plugin
 
 #### risset install <plugin> [<plugin2>, ...]
 

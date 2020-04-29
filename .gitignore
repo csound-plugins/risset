@@ -1,3 +1,4 @@
 *egg*
 dist
 .mypy*
+__pycache__*
