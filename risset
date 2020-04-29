@@ -807,7 +807,8 @@ class IndexParser:
         elif sys.platform == 'darwin':
             return Path("~/Library/Application Support/risset/risset-data").expanduser()
         elif sys.platform == 'win32':
-            return Path(R"C:\Users\$USERNAME\AppData\Local\risset\risset-data").expandvars()
+            path = os.path.expandvars(R"C:\Users\$USERNAME\AppData\Local\risset\risset-data")
+            return Path(path)
         else:
             raise RuntimeError(f"Platform {sys.platform} not supported")
 
