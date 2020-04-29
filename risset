@@ -908,20 +908,33 @@ def cmd_list(plugins_index:PluginsIndex, args):
     Lists all plugins available for download
     """
     # TODO: implement flags: --json, --output
+    leftcolwidth = 20
     for plugin in plugins_index.plugins:
+        data = []
+        extra_lines = []
+        if plugins_index.platform not in plugin.binaries.keys():
+            if not args.all:
+                debug(f"Plugin {plugin.name} has no binary for platform {plugins_index.platform}")
+                debug("    To include it in the list, use the --all flag")
+                continue
+            data.append("platform not supported")
         info = plugins_index.get_installed_plugin_info(plugin.name)
-        if info is None:
-            # not installed
-            status = ""
-        else:
+        if info:
             if info.versionstr == UNKNOWN_VERSION:
-                status = "[installed (not by risset)]"
+                data.append("installed (not by risset)")
             else:
-                status = f"[installed: {info.versionstr}]"
+                data.append(f"installed: {info.versionstr}")
             if not info.installed_in_system_folder:
-                status += "\n" + " "*20 + f"   |   Path: {info.path}"
+                extra_lines.append("Path: {info.path}")
+        if data:
+            status = "[" + ", ".join(data) + "]"
+        else:
+            status = ""
         leftcol = f"{plugin.name}  @ {plugin.version}"
-        print(f"* {leftcol.ljust(20)} | {plugin.short_description} {status}")
+        print(f"* {leftcol.ljust(leftcolwidth)} | {plugin.short_description}  {status}")
+        if extra_lines:
+            for line in extra_lines:
+                print(" "*leftcolwidth + f"   |   ", line)
     print()
 
 def cmd_show(plugins_index: PluginsIndex, args) -> bool:
@@ -1044,24 +1057,27 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
     if errors:
         return False
     return True
-    
+
+def add_flag(parser, flag, help):
+    parser.add_argument(flag, action="store_true", help=help)
 
 # Main parser
 parser = argparse.ArgumentParser()
-parser.add_argument("--index", default="")
-parser.add_argument("--debug", action="store_true", help="Print debug information")
+parser.add_argument("--index", default="", help="Deprecated...")
+add_flag(parser, "--debug", help="Print debug information")
 subparsers = parser.add_subparsers(dest='command')
 
 # List command
 list_group = subparsers.add_parser('list', help="List packages")
-list_group.add_argument("--json", action="store_true", help="Outputs list as json")
+add_flag(list_group, "--json", help="Outputs list as json")
+add_flag(list_group, "--all", "List all plugins, even those without a binary for the current platform")
 list_group.add_argument("-o", "--outfile", help="Outputs to a file")
 list_group.set_defaults(func=cmd_list)
 
 # Install command
 install_group = subparsers.add_parser("install", help="Install a package")
-install_group.add_argument("--user", action="store_true", help="Install in user folder")
-install_group.add_argument("--force", action="store_true", help="Force install/reinstall")
+add_flag(install_group, "--user", help="Install in user folder")
+add_flag(install_group, "--force", help="Force install/reinstall")
 install_group.add_argument("plugins", nargs="+",
                            help="Name of the plugin/plugins to install. "
                                 "Glob pattern are supported (enclose them inside quotation marks)")
