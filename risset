@@ -225,19 +225,27 @@ def _find_opcodes_dir(possible_dirs) -> Optional[Path]:
     the system plugins are installed
     """
     ext = _plugin_extension() 
-    debug("Finding opcodes dir: ")   
+    debug("Finding opcodes dir: ")
+
+    if sys.platform == "win32":
+        portaudio_dll = "rtpa.dll"
+    else:
+        portaudio_dll = "librtpa" + ext
+
     for d in possible_dirs:
         debug("   looking at ", d)
-        path = Path(d).expanduser()
+        d = _normalize_path(d)
+        path = Path(d)
         if not path.is_dir() or not path.exists():
             continue
         plugins = list(path.glob("*" + ext))
         if not plugins:
+            debug(f"Path {d} exists, but has no plugins, skipping")
             continue
-        rtpa = "librtpa" + ext
-        if any(plugin for plugin in plugins if rtpa == plugin.name):
-            return Path(d).expanduser()
-        errormsg(f"Found plugins dir {d}, but it does not seem to be the systems plugin path")
+        if any(plugin for plugin in plugins if portaudio_dll == plugin.name):
+            return path
+        errormsg(f"Found plugins dir {d}, but it does not seem to be the systems"
+                 f" plugin path ({portaudio_dll} should be present but was not found)")
     return None
 
 
