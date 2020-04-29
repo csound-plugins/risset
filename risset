@@ -15,6 +15,7 @@ import textwrap
 import fnmatch
 from typing import List, Dict, Tuple, Union, Optional
 
+VERSION = "0.1.0"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -1009,13 +1010,13 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
         return False
     return True
 
-def add_flag(parser, flag, help):
+def add_flag(parser, flag, help=""):
     parser.add_argument(flag, action="store_true", help=help)
 
 # Main parser
 parser = argparse.ArgumentParser()
-parser.add_argument("--index", default="", help="Deprecated...")
 add_flag(parser, "--debug", help="Print debug information")
+add_flag(parser, "--version")
 subparsers = parser.add_subparsers(dest='command')
 
 # List command
@@ -1047,6 +1048,10 @@ show_group.set_defaults(func=cmd_show)
 args = parser.parse_args()
 if args.debug:
     settings['debug'] = True
+
+if args.version:
+    print(VERSION)
+    sys.exit(0)
 
 index_parser = IndexParser()
 plugins_index = index_parser.parse()
