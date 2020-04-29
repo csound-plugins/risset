@@ -529,40 +529,46 @@ class PluginsIndex:
             possible_dirs = ["/usr/local/lib/csound/plugins64-6.0"]
         elif self.platform == 'macos':
             # The path based on ~ is used when csound is compiled from source.
-            # We give that priority since if a user is doing that, it is
-            # probably someone who knows what she is doing
+            # We give that priority since if a user is doing that, it is probably someone who knows
+            # what she is doing
             possible_dirs = [
                 f"~/Library/Frameworks/{self.csoundlib}.framework/Versions/{self.apiversion}/Resources/Opcodes64",
                 f"/Library/Frameworks/{self.csoundlib}.framework/Versions/{self.apiversion}/Resources/Opcodes64",
             ]
         elif self.platform == "windows":
-            possible_dirs = ["C:\\Program Files\\Csound_x64\\plugins64"]
+            possible_dirs = ["C:\\Program Files\\Csound6_x64\\plugins64"]
         else:
             return None
+
         out = _find_opcodes_dir(possible_dirs)
-        if out:
-            assert isinstance(out, Path)
-            assert out.exists()
-            assert out.is_dir()
-            assert out.is_absolute()
-            return out
-        errormsg(f"System plugins path not found! Searched paths: {possible_dirs}")
-        return None
+        if not out:
+            errormsg(f"System plugins path not found! Searched paths: {possible_dirs}")
+            return None
+        assert isinstance(out, Path)
+        assert out.exists()
+        assert out.is_dir()
+        assert out.is_absolute()
+        return out
 
     def get_user_plugins_path(self) -> Optional[Path]:
+        """ Return the install path for user plugins. Does not check if it is properly set """
         data_dir = _data_dir_for_platform()
         return data_dir / "csound6/plugins64"
 
     def get_user_installed_dlls(self) -> List[Path]:
+        """
+        Return a list of plugins installed at the user plugin path. If the user path is not set,
+        returns an empty list
+        """
         ext = _plugin_extension()
-        if self.is_user_plugins_path_set():
-            return list(self.user_plugins_path.glob("*" + ext))
-        else:
+        if not self.is_user_plugins_path_set():
             debug("get installed dlls: user plugins path not set")
-        return []
+            return []
+        return list(self.user_plugins_path.glob("*" + ext))
 
     def get_system_installed_dlls(self) -> List[Path]:
         if not self.system_plugins_path:
+            debug("System plugins path not set!")
             return []
         ext = _plugin_extension()
         return list(self.system_plugins_path.glob("*" + ext))
@@ -574,6 +580,12 @@ class PluginsIndex:
         return self.get_system_installed_dlls() + self.get_user_installed_dlls()
 
     def is_dll_installed(self, libname:str) -> bool:
+        """
+        Returns True if libname is installed
+
+        Args:
+            libname: the name of the plugin library (without extension)
+        """
         dll, user_installed = self.get_installed_path_for_libname(libname)
         if dll:
             return True
@@ -590,6 +602,12 @@ class PluginsIndex:
         If not installed returns (None, False)
 
         A user installed dll has priority over system installed
+
+        Args:
+            libname: the name of the plugin library, without extension (libfoo)
+
+        Returns:
+            A tuple (path to the actual file or None if not found, True if this is inside the user plugins path)
         """
         dll = libname + _plugin_extension()
         user_dlls = self.get_user_installed_dlls()
@@ -603,12 +621,21 @@ class PluginsIndex:
         return None, False
 
     def find_plugin(self, plugin_name:str) -> Optional[Plugin]:
+        """
+        Given a plugin name, find the Plugin definition
+
+        Args:
+            plugin_name: the name of the plugin as found in the name field in the manifest
+        """
         for plugin in self.plugins:
             if plugin.name == plugin_name:
                 return plugin
         return None
 
     def get_installed_plugin_info(self, plugin_name:str) -> Optional[InstalledPluginInfo]:
+        """
+        Returns an InstalledPluginInfo if found, None otherwise
+        """
         plugin = self.find_plugin(plugin_name)
         if not plugin:
             raise KeyError(f"Plugin {plugin_name} unknown")
@@ -669,6 +696,9 @@ class PluginsIndex:
         return manifests
 
     def get_installed_manifests_path(self) -> Path:
+        """
+        Returns the path to were installation manifests are saved in this system
+        """
         return self.get_data_dir() / "installed/manifests"
         
     def get_data_dir(self) -> Path:
@@ -678,6 +708,7 @@ class PluginsIndex:
         return _data_dir_for_platform() / "risset"
 
     def check_plugin_installed(self, plugin:Plugin) -> bool:
+        # TODO
         return True
 
     def get_plugin_dll(self, plugin:Plugin) -> Union[Path, ErrorMsg]:
@@ -812,7 +843,10 @@ class IndexParser:
         else:
             raise RuntimeError(f"Platform {sys.platform} not supported")
 
-    def update_git_repository(self):
+    def update_git_repository(self) -> None:
+        """
+        Update the data repository. Clone if first time
+        """
         gitpath = self._get_path_of_git_repository()
         if not gitpath.exists():
             _git_clone(GIT_REPOSITORY, gitpath)
