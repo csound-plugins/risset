@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
