@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -39,7 +39,7 @@ def banner(lines: List[str]):
     print("", sep, sep, "", sep="\n", end="")
     for line in lines:
         print(marginstr, line)
-    print("", sep, sep, "", sep="\n", end="")
+    print("", sep, sep, "", sep="\n")
     
 
 class ErrorMsg(str):
