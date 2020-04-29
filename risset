@@ -6,9 +6,8 @@ import dataclasses
 from pathlib import Path
 import os
 # import re
-import sys
-from urllib.parse import urlparse
 import urllib.request
+import sys
 import tempfile
 import shutil
 import subprocess
@@ -17,7 +16,6 @@ import fnmatch
 from typing import List, Dict, Tuple, Union, Optional
 
 
-DEFAULT_INDEX = ""
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
 settings = {
@@ -275,27 +273,13 @@ def _load_manifest(path: str) -> Union[dict, ErrorMsg]:
         return ErrorMsg(str(e))
 
 
-def _download_file(url:str, outpath:str=None) -> Tuple[Path, ErrorMsg]:
-    if outpath:
-        ext = os.path.splitext(outpath)[1]
-    else:
-        ext = os.path.splitext(url)[1]
-    with urllib.request.urlopen(url) as response:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as outfile: 
-            shutil.copyfileobj(response, outfile)
-            if outpath:
-                shutil.move(outfile.name, outpath)
-                return Path(outpath), None
-            else:
-                XXX
-
 def is_url(value:str) -> bool:
     """
     Return whether or not given value is a valid URL.
     Args:
         value: URL address string to validate
     """
-    result = urlparse(str(value))
+    result = urllib.request.urlparse(str(value))
     return result.scheme and result.netloc
 
 
@@ -385,14 +369,14 @@ def resolve_path(filepath: str, cwd:str=None) -> Path:
         cwd = Path(cwd)
     return (cwd / p).resolve()
 
+
 def plugin_definition_from_file(filepath: str, 
                                 indexfolder:str=""
                                 ) -> Union[Plugin, ErrorMsg]:
     """
     Args:
         filepath: if relative, it is relative to the index file
-        indexfolder: the path where the plugins.json file is (a folder). If the index
-            file is a url, then this should be empty
+        indexfolder: the path where the plugins.json file is (a folder).
 
     Returns:
         either a Plugin, or an ErrorMsg
@@ -426,10 +410,6 @@ def plugin_definition_from_file(filepath: str,
         raise e
 
     return plugin
-
-
-def plugin_definition_from_url(url: str) -> Union[Plugin, ErrorMsg]:
-    raise RuntimeError("urls are not yet supported")
 
 
 def _load_url(url:str) -> str:
@@ -731,17 +711,12 @@ class PluginsIndex:
             error = ErrorMsg(f"No binary defined for platform {self.platform}."
                              f" Available platforms for {plugin.name}: {defined_platforms}")
             return error
-        if is_url(binary_definition.url):
-            path, error = _download_file(binary_definition.url)
-            if error:
-                return ErrorMsg(f"Error downloading binary: {error}")
-        else:
-            # The manifest defines a path. If it is relative, it is relative to the
-            # manifest itself.
-            path = resolve_path(binary_definition.url, Path(plugin.source).parent)
-            if not path.exists():
-                return ErrorMsg(f"Binary not found. Given path was: {str(path)}")
-            return path
+        # The manifest defines a path. If it is relative, it is relative to the
+        # manifest itself.
+        path = resolve_path(binary_definition.url, Path(plugin.source).parent)
+        if not path.exists():
+            return ErrorMsg(f"Binary not found. Given path was: {str(path)}")
+        return path
 
     def install_plugin(self, plugin: Plugin, user=False) -> Optional[ErrorMsg]:
         """
@@ -806,39 +781,16 @@ class PluginsIndex:
 
 
 class IndexParser:
-    def __init__(self, git=True, index:str=""):
+    def __init__(self):
         """
-        Create an index parser. There are two working modes. In the first one,
-        git is False and the user gives the path to a plugins.json file 
-        or, if nothing is given, uses the default url to the plugins.json file.
-        In the second mode (git=True), a git repo is cloned/updated and the index
-        defined in it is used. In this second mode all files are accesses localy
-        after cloning and all paths are relative to the repo.
-        At the moment only git mode is working
-
-        Args
-            index: the path to the plugins.json file. If not given, a default 
-                url is used
-            git: if True, we run in git mode. In this mode, index and binaries are
-                accessed by cloning a git repository. In this case, index is not
-                used 
+        Create an index parser.
+        The git repository holding the metadata/binaries is cloned/updated and
+        the index defined in it is used. After that all files are accesses localy.
         """
-        self.git = git
-        if git:
-            self.update_git_repository()
-            self.index_is_url = False
-            self.index_folder: Path = self._get_path_of_git_repository()
-            self.index: Path = self.index_folder / "plugins.json"
-            assert self.index.exists()
-        else:
-            self.index = index
-            self.index_is_url = is_url(index)
-            if not self.index_is_url:
-                index_folder, index_file = os.path.split(index)
-                assert index_file == "plugins.json"
-            else:
-                index_folder = None
-            self.index_folder = index_folder
+        self.update_git_repository()
+        self.index_folder: Path = self._get_path_of_git_repository()
+        self.index: Path = self.index_folder / "plugins.json"
+        assert self.index.exists()
 
     def _get_path_of_git_repository(self) -> Path:
         if sys.platform == 'linux':
@@ -888,9 +840,8 @@ class IndexParser:
         plugin_definitions: List[Plugin] = []
         for pluginkey, url in plugins.items():
             if is_url(url):
-                result = plugin_definition_from_url(url)
-            else:
-                result = plugin_definition_from_file(url, self.index_folder)
+                raise ValueError("URLs are deprecated")
+            result = plugin_definition_from_file(url, self.index_folder)
             if isinstance(result, ErrorMsg):
                 errormsg(f"Error parsing plugin {pluginkey}: {result}")
                 continue
@@ -1097,18 +1048,7 @@ args = parser.parse_args()
 if args.debug:
     settings['debug'] = True
 
-plugins_index = args.index
-if plugins_index == "default":
-    plugins_index = DEFAULT_INDEX
-
-if args.index:
-    git = False
-    debug("Using backend: index")
-else:
-    git = True
-    debug("Using backend: git")
-
-index_parser = IndexParser(index=plugins_index, git=git)
+index_parser = IndexParser()
 plugins_index = index_parser.parse()
 
 if not args.command:
