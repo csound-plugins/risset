@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 
-import argparse
-import json
-import dataclasses
-from pathlib import Path
 import os
-# import re
-import urllib.request
+import argparse
+import dataclasses
+import json
 import sys
 import tempfile
 import shutil
 import subprocess
 import textwrap
 import fnmatch
+from urllib.parse import urlparse
+from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -82,12 +81,17 @@ class InstalledPluginInfo:
 UNKNOWN_VERSION = "Unknown"
 
 
-def _plugin_extension() -> Optional[str]:
+class PlatformNotSupportedError(Exception): pass
+
+
+def _plugin_extension() -> str:
     ext = {
         'linux': '.so',
         'darwin': '.dylib',
         'win32': '.dll'
     }.get(sys.platform)
+    if not ext:
+        raise PlatformNotSupportedError(f"Platform {sys.platform} is not supported")
     return ext
 
 
@@ -123,6 +127,7 @@ def _get_shell() -> Optional[str]:
     shell = os.path.split(shellenv)[1].strip()
     if shell in ("bash", "zsh", "fish"):
         return shell
+    return None
 
 
 def _git_clone(repo:str, destination:Path) -> None:
@@ -280,8 +285,8 @@ def is_url(value:str) -> bool:
     Args:
         value: URL address string to validate
     """
-    result = urllib.request.urlparse(str(value))
-    return result.scheme and result.netloc
+    result = urlparse(str(value))
+    return bool(result.scheme and result.netloc)
 
 
 def _parse_pluginkey(pluginkey: str) -> Tuple[str, str]:
@@ -365,10 +370,8 @@ def resolve_path(filepath: str, cwd:str=None) -> Path:
     if p.is_absolute():
         return p.resolve()
     if cwd is None:
-        cwd = Path.cwd()
-    else:
-        cwd = Path(cwd)
-    return (cwd / p).resolve()
+        return (Path.cwd()/p).resolve()
+    return (Path(cwd)/p).resolve()
 
 
 def plugin_definition_from_file(filepath: str, 
@@ -414,6 +417,7 @@ def plugin_definition_from_file(filepath: str,
 
 
 def _load_url(url:str) -> str:
+    import urllib.request
     debug(f"Parsing url: {url}")
     with urllib.request.urlopen(url) as response:
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
@@ -447,9 +451,11 @@ class PluginsIndex:
         self.platform = _get_platform()  # linux, macos, windows
         self.csoundlib = "CsoundLib64"
         self.apiversion = "6.0"
-        self.system_plugins_path: Path = self.get_system_plugins_path()
+        self.system_plugins_path = self.get_system_plugins_path()
         debug(f"System plugins path: {self.system_plugins_path}")
         self.user_plugins_path = self.get_user_plugins_path()
+        if self.system_plugins_path is None:
+            errormsg("Could not find the system plugin folder")
 
     def is_user_plugins_path_set(self) -> bool:
         """
@@ -490,7 +496,7 @@ class PluginsIndex:
         add a user plugin path
         """
         sep = _get_path_separator()
-        lines = []
+        lines: List[str] = []
         userpath = self.user_plugins_path
         systempath = self.system_plugins_path
         _ = lines.append
@@ -550,10 +556,12 @@ class PluginsIndex:
         returns an empty list
         """
         ext = _plugin_extension()
-        if not self.is_user_plugins_path_set():
+        user_path = self.user_plugins_path
+        if user_path is None:
             debug("get installed dlls: user plugins path not set")
             return []
-        return list(self.user_plugins_path.glob("*" + ext))
+        assert self.is_user_plugins_path_set()
+        return list(user_path.glob("*" + ext))
 
     def get_system_installed_dlls(self) -> List[Path]:
         if not self.system_plugins_path:
@@ -637,7 +645,7 @@ class PluginsIndex:
             return None
 
         installed_version = UNKNOWN_VERSION
-        installed_manifest_path = ""
+        installed_manifest_path = None
 
         for manifest in self.get_installed_manifests():
             pluginkey = manifest.name.split(".")[0]
@@ -714,7 +722,7 @@ class PluginsIndex:
             return error
         # The manifest defines a path. If it is relative, it is relative to the
         # manifest itself.
-        path = resolve_path(binary_definition.url, Path(plugin.source).parent)
+        path = resolve_path(binary_definition.url, Path(plugin.source).parent.as_posix())
         if not path.exists():
             return ErrorMsg(f"Binary not found. Given path was: {str(path)}")
         return path
@@ -744,15 +752,16 @@ class PluginsIndex:
         try:
             shutil.copy(plugin_dll.as_posix(), install_path.as_posix())
         except IOError as e:
-            debug(e)
+            debug(str(e))
             if not sudo or not (self.platform == "linux" or self.platform == "macos"):
                 return ErrorMsg("Could not copy the binary to the install path")
-            error = _copy_with_sudo(plugin_dll, install_path)
+            error = _copy_with_sudo(plugin_dll.as_posix(), install_path.as_posix())
             if error:
                 return error
 
         if not (install_path / plugin_dll).exists():
             return ErrorMsg(f"Installation of plugin {plugin.name} failed")
+        return None
         
         # Installation succeeded, install manifest
         manifests_path = self.get_installed_manifests_path()
@@ -814,11 +823,11 @@ class IndexParser:
         else:
             _git_update(gitpath)
 
-    def parse(self) -> PluginsIndex:
-        index_text = load_text(self.index)
+    def parse(self) -> Union[PluginsIndex, ErrorMsg]:
+        index_text = load_text(self.index.as_posix())
         return self._parse_index(index_text)
 
-    def _parse_index(self, indexstr: str) -> PluginsIndex:
+    def _parse_index(self, indexstr: str) -> Union[PluginsIndex, ErrorMsg]:
         """
         Parses the content of the plugins.json file
 
@@ -842,13 +851,16 @@ class IndexParser:
         for pluginkey, url in plugins.items():
             if is_url(url):
                 raise ValueError("URLs are deprecated")
-            result = plugin_definition_from_file(url, self.index_folder)
+            result = plugin_definition_from_file(url, self.index_folder.as_posix())
             if isinstance(result, ErrorMsg):
                 errormsg(f"Error parsing plugin {pluginkey}: {result}")
                 continue
             plugin_definitions.append(result)
         index_version = d.get('version', '0.0.0')
-        return PluginsIndex(version=index_version, plugins=plugin_definitions)
+        plugins_index = PluginsIndex(version=index_version, plugins=plugin_definitions)
+        if plugins_index.system_plugins_path is None:
+            return ErrorMsg("Could not find syste plugins folder")
+        return plugins_index
 
 
 ###############################################################
@@ -890,10 +902,14 @@ def cmd_list(plugins_index:PluginsIndex, args):
     print()
 
 def cmd_show(plugins_index: PluginsIndex, args) -> bool:
+    """
+    Returns True on success
+    """
     plugin = args.plugin
     plugdef = plugins_index.find_plugin(plugin)
     if plugdef is None:
         errormsg(f"Plugin {plugin} unknown")
+        return False
     installed_str = plugdef.version or "not installed"
     print()
     print(f"Plugin     : {plugdef.name}")
@@ -909,6 +925,7 @@ def cmd_show(plugins_index: PluginsIndex, args) -> bool:
     for s in opcstrs:
         print(" "*12, s)
     print()
+    return True
 
 def cmd_rm(plugins_index:PluginsIndex, args) -> bool:
     errors = []
@@ -1055,6 +1072,9 @@ if args.version:
 
 index_parser = IndexParser()
 plugins_index = index_parser.parse()
+if isinstance(plugins_index, ErrorMsg):
+    errormsg(plugins_index)
+    sys.exit(-1)
 
 if not args.command:
     parser.print_help()
