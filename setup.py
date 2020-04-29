@@ -7,7 +7,7 @@ if (sys.version_info.major, sys.version_info.minor) < (3, 6):
     sys.exit(-1)
 
 long_description = open("README.md").read()
-version = subprocess.getoutput("python3 ./risset --version")
+version = subprocess.getoutput("python3 ./risset.py --version")
 
 setup(
     name = "risset",
@@ -19,6 +19,13 @@ setup(
     long_description = long_description,
     long_description_content_type = 'text/markdown',
     py_modules=["risset"],
-    scripts=["risset"],
-    url="https://github.com/csound-plugins/risset"
+
+    url="https://github.com/csound-plugins/risset",
+
+    entry_points={
+        "console_scripts": [
+            "risset=risset:main",
+        ]
+    }
+
 )
