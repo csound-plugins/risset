@@ -82,17 +82,16 @@ UNKNOWN_VERSION = "Unknown"
 
 
 class PlatformNotSupportedError(Exception): pass
+class PluginDefinitionError(Exception): pass
+class InternalError(Exception): pass
 
 
 def _plugin_extension() -> str:
-    ext = {
+    return {
         'linux': '.so',
         'darwin': '.dylib',
         'win32': '.dll'
-    }.get(sys.platform)
-    if not ext:
-        raise PlatformNotSupportedError(f"Platform {sys.platform} is not supported")
-    return ext
+    }[sys.platform]
 
 
 def _get_path_separator() -> str:
@@ -104,14 +103,11 @@ def _get_path_separator() -> str:
 
 def _get_platform() -> str:
     """Returns one of "linux", "macos", "windows" """
-    platform = {
+    return {
         'linux': 'linux',
         'darwin': 'macos',
         'win32': 'windows'
-    }.get(sys.platform)
-    if not platform:
-        raise SystemError("Platform {sys.platform} not supported")
-    return platform
+    }[sys.platform]
 
 
 def _get_shell() -> Optional[str]:
@@ -130,6 +126,11 @@ def _get_shell() -> Optional[str]:
     return None
 
 
+def _get_binary(binary) -> Optional[str]:
+    path = shutil.which(binary)
+    return path if path else None
+
+
 def _git_clone(repo:str, destination:Path) -> None:
     """
     Clone the given repository to the destination.
@@ -140,9 +141,7 @@ def _git_clone(repo:str, destination:Path) -> None:
         raise ValueError("Destination should be an absolute path")
     if destination.exists():
         raise OSError("Destination path already exists, can't clone git repository")
-    gitbin = shutil.which("git")
-    if not gitbin:
-        raise OSError("Could not find git binary. Is it in the path?")
+    gitbin = _get_binary("git")
     parent = destination.parent
     if not parent.exists():
         parent.mkdir(parents=True, exist_ok=True)
@@ -154,16 +153,14 @@ def _git_clone(repo:str, destination:Path) -> None:
                            " can't find plugins.json file")
 
 
-def _git_update(repopath:Path):
+def _git_update(repopath:Path) -> None:
     """
     Update the git repo at the given path
     """
     debug(f"Updating git repository: {repopath}")
     if not repopath.exists():
         raise OSError(f"Can't find path to git repository {repopath}")
-    gitbin = shutil.which("git")
-    if not gitbin:
-        raise OSError("Could not find git binary. Is it in the path?")
+    gitbin = _get_binary("git")
     cwd = os.path.abspath(os.path.curdir)
     os.chdir(str(repopath))
     if settings['debug']:
@@ -174,6 +171,9 @@ def _git_update(repopath:Path):
 
 
 def _copy_with_sudo(src: str, dst: str) -> Optional[ErrorMsg]:
+    if sys.platform == 'win32':
+        raise PlatformNotSupportedError("This function cannot be called in windows")
+
     debug(f"(sudo) Copying {src} -> {dst} ")
     try:
         subprocess.call(["sudo", "cp", src, dst])
@@ -191,9 +191,11 @@ def _sudo_rm(path: str) -> Optional[ErrorMsg]:
     Args:
         path: the path of the file to remove
     """
-    debug(f"(sudo) rm {path}")
-    print(f"\n  Administrator rights are needed to remove {path}\n")
+    if sys.platform == 'win32':
+        raise PlatformNotSupportedError("This function cannot be called in windows")
 
+    debug(f"(sudo) rm {path}")
+    print(f"\n** Administrator rights needed to remove {path}\n **")
     try:
         subprocess.call(["sudo", "rm", "-i", path])
     except KeyboardInterrupt:
@@ -204,6 +206,7 @@ def _sudo_rm(path: str) -> Optional[ErrorMsg]:
 
 
 def version_tuplet(versionstr:str) -> Tuple[int, int, int]:
+    """ Convert a version string to its integer parts """
     if not versionstr:
         raise ValueError("versionstr is empty")
     parts = versionstr.split(".")
@@ -237,7 +240,7 @@ def _find_opcodes_dir(possible_dirs) -> Optional[Path]:
         portaudio_dll = "librtpa" + ext
 
     for d in possible_dirs:
-        debug("   looking at ", d)
+        debug("   > looking at ", d)
         d = _normalize_path(d)
         path = Path(d)
         if not path.is_dir() or not path.exists():
@@ -253,7 +256,7 @@ def _find_opcodes_dir(possible_dirs) -> Optional[Path]:
     return None
 
 
-def _data_dir_for_platform():
+def _data_dir_for_platform() -> Path:
     """
     Returns the data directory for the given platform
     """
@@ -266,7 +269,7 @@ def _data_dir_for_platform():
         p = R"C:\Users\$USERNAME\AppData\Local"
         return Path(os.path.expandvars(p))
     else:
-        raise ValueError(f"Platform unknown: {platform}")
+        raise PlatformNotSupportedError(f"Platform unknown: {platform}")
 
 
 def _load_manifest(path: str) -> Union[dict, ErrorMsg]:
@@ -300,10 +303,6 @@ def _parse_pluginkey(pluginkey: str) -> Tuple[str, str]:
         name = pluginkey
         version = "0.0.0"
     return name, version
-
-
-class PluginDefinitionError(Exception):
-    pass
 
 
 def _normalize_version(version: str, default="0.0.0") -> str:
@@ -360,6 +359,7 @@ def _plugin_from_dict(d: dict) -> Plugin:
         long_description=d.get('long_description', ''),
     )
 
+
 def resolve_path(filepath: str, cwd:str=None) -> Path:
     """
     If filepath is relative, use cwd as base to convert it
@@ -409,10 +409,9 @@ def plugin_definition_from_file(filepath: str,
     d = json.load(open(path))
     try:
         plugin = _plugin_from_dict(d)
-        plugin.source = str(path)
     except PluginDefinitionError as e:
         raise e
-
+    plugin.source = str(path)
     return plugin
 
 
@@ -427,6 +426,7 @@ def _load_url(url:str) -> str:
 
 
 def load_text(file_or_url:str) -> str:
+    """ Read the text in file or url """
     if is_url(file_or_url):
         return _load_url(file_or_url)
     assert os.path.exists(file_or_url)
@@ -442,6 +442,7 @@ def _normalize_path(path:str) -> str:
     path = os.path.expanduser(path)
     path = os.path.abspath(path)
     return path
+
 
 class PluginsIndex:
 
@@ -717,7 +718,6 @@ class PluginsIndex:
             defined_platforms = ", ".join(plugin.binaries.keys())
             error = ErrorMsg(f"No binary defined for platform {self.platform}."
                              f" Available platforms for {plugin.name}: {defined_platforms}")
-            return error
         # The manifest defines a path. If it is relative, it is relative to the
         # manifest itself.
         path = resolve_path(binary_definition.url, Path(plugin.source).parent.as_posix())
@@ -743,8 +743,7 @@ class PluginsIndex:
 
         plugin_dll = self.get_plugin_dll(plugin)
         if isinstance(plugin_dll, ErrorMsg):
-            error = plugin_dll
-            return ErrorMsg(f"Could not find a binary for the given plugin: {error}")
+            return ErrorMsg(f"Could not find a binary for the given plugin: {plugin_dll}")
 
         assert install_path is not None
         try:
@@ -777,7 +776,8 @@ class PluginsIndex:
             f.write(manifest_json)
         debug(f"Saved manifest to {manifest_path}")
         debug(manifest_json)
-        return None   # no errors
+        # no errors
+        return None
 
     def expand_plugin_glob(self, pattern) -> List[str]:
         """
@@ -820,6 +820,7 @@ class IndexParser:
             _git_clone(GIT_REPOSITORY, gitpath)
         else:
             _git_update(gitpath)
+
 
     def parse(self) -> Union[PluginsIndex, ErrorMsg]:
         index_text = load_text(self.index.as_posix())
@@ -913,6 +914,9 @@ def cmd_show(plugins_index: PluginsIndex, args) -> bool:
     print(f"Plugin     : {plugdef.name}")
     print(f"Installed  : {installed_str}")
     print(f"Abstract   : {plugdef.short_description}")
+    if plugin.long_description:
+        print(" Description : ")
+        print(textwrap.indent("     ", plugin.long_description))
     print(f"Minimal csound version : {plugdef.csound_version}")
     print(f"Author     : {plugdef.author}")
     print( "Platforms  : ")
@@ -924,6 +928,7 @@ def cmd_show(plugins_index: PluginsIndex, args) -> bool:
         print(" "*12, s)
     print()
     return True
+
 
 def cmd_rm(plugins_index:PluginsIndex, args) -> bool:
     errors = []
@@ -1025,11 +1030,20 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
         return False
     return True
 
+
 def add_flag(parser, flag, help=""):
     parser.add_argument(flag, action="store_true", help=help)
 
-def main():
 
+def main():
+    # Preliminary checks
+    if sys.platform not in ("linux", "darwin", "win32"):
+        errormsg("Platform not supported: {sys.platform}")
+        sys.exit(-1)
+
+    if _get_binary("git") is None:
+        errormsg("git command not found. Check that git is installed and in the PATH")
+        sys.exit(-1)
 
     # Main parser
     parser = argparse.ArgumentParser()
@@ -1071,14 +1085,19 @@ def main():
         print(VERSION)
         sys.exit(0)
 
-    index_parser = IndexParser()
+    if not args.command:
+        parser.print_help()
+        sys.exit(-1)
+
+    try:
+        index_parser = IndexParser()
+    except Exception as e:
+        errormsg(str(e))
+        sys.exit(-1)
+
     plugins_index = index_parser.parse()
     if isinstance(plugins_index, ErrorMsg):
         errormsg(plugins_index)
-        sys.exit(-1)
-
-    if not args.command:
-        parser.print_help()
         sys.exit(-1)
 
     ok = args.func(plugins_index, args)
