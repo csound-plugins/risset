@@ -71,7 +71,49 @@ $ risset update
 
 ```
 
-## Upgrading risset 
+## Risset commands
+
+#### list
+
+    $ risset list
+
+#### show
+
+Show information about a plugin
+
+    $ risset show <plugin>
+
+
+#### install
+
+Install one or multiple plugins
+
+    $ risset install <plugin> [<plugin2>, ...]
+
+Install a given plugin for the current platform. Plugins are installed into
+the system folder where all other builtin plugins are installed. If the `--user`
+flag is given, plugins are installed into the corresponding path for each platform.
+
+* linux: `$HOME/.local/share/csound6/plugins64`
+* macos: `$HOME/Library/Application Support/csound6/plugins64`
+* windows: `C:\Users\<username>\AppData\Local\csound6\plugins64`
+
+
+In order for the `--user` option to be available the user should have modified its `OPCODE6DIR64`
+environment variable to include this path. If you attempt to install a plugin with the `--user` flag
+and your system is not correctly setup, `risset` will fail and inform you how to modify your `OPCODE6DIR64`
+variable to setup it correctly. 
+
+
+#### remove
+
+Remove an installed plugin
+
+    $ risset remove <plugin>
+    
+-------
+
+# Upgrading risset 
 
 If installed via `pip`, do:
 
@@ -170,46 +212,6 @@ It is desirable, but not a requirement, that all opcodes support the three major
 platforms: linux, macos and windows. Support for a given platform is indicated by the availability of
 a binary for the given platform in the manifest.json file.
 
-## Risset commands
-
-#### list
-
-    $ risset list
-
-#### show
-
-Show information about a plugin
-
-    $ risset show <plugin>
-
-
-#### install
-
-Install one or multiple plugins
-
-    $ risset install <plugin> [<plugin2>, ...]
-
-Install a given plugin for the current platform. Plugins are installed into
-the system folder where all other builtin plugins are installed. If the `--user`
-flag is given, plugins are installed into the corresponding path for each platform.
-
-* linux: `$HOME/.local/share/csound6/plugins64`
-* macos: `$HOME/Library/Application Support/csound6/plugins64`
-* windows: `C:\Users\<username>\AppData\Local\csound6\plugins64`
-
-
-In order for the `--user` option to be available the user should have modified its `OPCODE6DIR64`
-environment variable to include this path. If you attempt to install a plugin with the `--user` flag
-and your system is not correctly setup, `risset` will fail and inform you how to modify your `OPCODE6DIR64`
-variable to setup it correctly. 
-
-
-#### remove
-
-Remove an installed plugin
-
-    $ risset remove <plugin>
-    
 
 ## TODO
 
