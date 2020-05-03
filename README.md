@@ -75,6 +75,8 @@ $ risset update
 
 #### list
 
+List all available plugins for your platform
+
     $ risset list
 
 #### show
@@ -91,18 +93,17 @@ Install one or multiple plugins
     $ risset install <plugin> [<plugin2>, ...]
 
 Install a given plugin for the current platform. Plugins are installed into
-the system folder where all other builtin plugins are installed. If the `--user`
-flag is given, plugins are installed into the corresponding path for each platform.
+the system folder where all other builtin plugins are installed (this requires administrator rights in some platforms). 
+If the `--user` flag is given, plugins are installed into the user path:
 
 * linux: `$HOME/.local/share/csound6/plugins64`
 * macos: `$HOME/Library/Application Support/csound6/plugins64`
 * windows: `C:\Users\<username>\AppData\Local\csound6\plugins64`
 
-
 In order for the `--user` option to be available the user should have modified its `OPCODE6DIR64`
-environment variable to include this path. If you attempt to install a plugin with the `--user` flag
-and your system is not correctly setup, `risset` will fail and inform you how to modify your `OPCODE6DIR64`
-variable to setup it correctly. 
+environment variable to include both the system plugin path and this path. If you attempt to install 
+a plugin with the `--user` flag and your system is not correctly setup, `risset` will fail and inform 
+you how to modify your `OPCODE6DIR64` variable to set it up correctly. 
 
 
 #### remove
