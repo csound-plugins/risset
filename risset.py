@@ -913,19 +913,22 @@ def cmd_show(plugins_index: PluginsIndex, args) -> bool:
     print()
     print(f"Plugin     : {plugdef.name}")
     print(f"Installed  : {installed_str}")
-    print(f"Abstract   : {plugdef.short_description}")
-    if plugin.long_description:
-        print(" Description : ")
-        print(textwrap.indent("     ", plugin.long_description))
-    print(f"Minimal csound version : {plugdef.csound_version}")
     print(f"Author     : {plugdef.author}")
-    print( "Platforms  : ")
+    print(f"Abstract   : {plugdef.short_description}")
+    if plugdef.long_description.strip():
+        print("Description:")
+        for line in textwrap.wrap(plugdef.long_description, 72):
+            print(" "*3, line)
+        # print(textwrap.wrapindent("     ", plugdef.long_description))
+    print( "Platforms: ")
     for platform, platform_info in plugdef.binaries.items():
         print(f"    * {platform}: {platform_info.build_platform}")
-    print(f"Opcodes    :")
-    opcstrs = textwrap.wrap(", ".join(plugdef.opcodes), 50)
+    print(f"Opcodes:")
+    opcstrs = textwrap.wrap(", ".join(plugdef.opcodes), 72)
     for s in opcstrs:
-        print(" "*12, s)
+        print(" "*3, s)
+    
+    print(f"Minimal csound version : {plugdef.csound_version}")
     print()
     return True
 
