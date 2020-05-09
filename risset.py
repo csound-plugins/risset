@@ -18,21 +18,25 @@ VERSION = "0.1.7"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
-settings = {
+SETTINGS = {
     'debug': False
 }
 
+
 def debug(*msgs: str) -> None:
-    if settings['debug']:
+    """ Print debug info only if debugging is turned on """
+    if SETTINGS['debug']:
         print("DEBUG: ", *msgs, file=sys.stderr)
 
 
-def errormsg(s: str) -> None:
-    for line in s.splitlines():
+def errormsg(msg: str) -> None:
+    """ Print error message """
+    for line in msg.splitlines():
         print("** Error: ", line, file=sys.stderr)
 
 
 def banner(lines: List[str]):
+    """ Print a banner message """
     margin = 2
     marginstr = " " * margin
     sep = "*" * (margin*2 + max(len(line) for line in lines))
@@ -40,7 +44,7 @@ def banner(lines: List[str]):
     for line in lines:
         print(marginstr, line)
     print("", sep, sep, "", sep="\n")
-    
+
 
 class ErrorMsg(str):
     pass
@@ -74,9 +78,9 @@ class InstalledPluginInfo:
     name: str
     path: Path
     installed_in_system_folder: bool
-    versionstr: Optional[str] 
-    installed_manifest_path: Optional[Path] = None 
-    
+    versionstr: Optional[str]
+    installed_manifest_path: Optional[Path] = None
+
 
 UNKNOWN_VERSION = "Unknown"
 
@@ -111,7 +115,7 @@ def _get_platform() -> str:
 
 
 def _get_shell() -> Optional[str]:
-    """ Returns one of "bash", "zsh", "fish" 
+    """ Returns one of "bash", "zsh", "fish"
     If not able to get the given information, returns None
     In particular, in windows it returns None
     """
@@ -163,7 +167,7 @@ def _git_update(repopath:Path) -> None:
     gitbin = _get_binary("git")
     cwd = os.path.abspath(os.path.curdir)
     os.chdir(str(repopath))
-    if settings['debug']:
+    if SETTINGS['debug']:
         subprocess.call([gitbin, "pull"])
     else:
         subprocess.call([gitbin, "pull"], stdout=subprocess.PIPE)
@@ -214,7 +218,7 @@ def version_tuplet(versionstr:str) -> Tuple[int, int, int]:
         ints = [int(part) for part in parts]
     except ValueError:
         raise ValueError(f"Could not parse version {versionstr}")
-        
+
     if len(ints) == 1:
         ints += [0, 0]
     elif len(ints) == 2:
@@ -224,14 +228,14 @@ def version_tuplet(versionstr:str) -> Tuple[int, int, int]:
         ints = ints[:3]
     i1, i2, i3 = ints
     return i1, i2, i3
-    
+
 
 def _find_opcodes_dir(possible_dirs) -> Optional[Path]:
     """
     Given a list of possible paths, find the folder where
     the system plugins are installed
     """
-    ext = _plugin_extension() 
+    ext = _plugin_extension()
     debug("Finding opcodes dir: ")
 
     if sys.platform == "win32":
@@ -312,7 +316,7 @@ def _normalize_version(version: str, default="0.0.0") -> str:
         debug(f"Error while parsing version {version}: %s", str(e))
         return default
     return ".".join(str(i) for i in versiontup)
-    
+
 
 def _parse_binary(platform:str, binary_definition:dict) -> Union[Binary, ErrorMsg]:
     url = binary_definition.get('url')
@@ -342,7 +346,7 @@ def _plugin_from_dict(d: dict) -> Plugin:
             errormsg(result)
         else:
             binaries[result.platform] = result
-    
+
     if not binaries:
         raise PluginDefinitionError("No valid binaries defined")
     return Plugin(
@@ -363,7 +367,7 @@ def _plugin_from_dict(d: dict) -> Plugin:
 def resolve_path(filepath: str, cwd:str=None) -> Path:
     """
     If filepath is relative, use cwd as base to convert it
-    to an absolute path. If cwd is not given, use the current 
+    to an absolute path. If cwd is not given, use the current
     working dir
     """
     p = Path(filepath)
@@ -374,7 +378,7 @@ def resolve_path(filepath: str, cwd:str=None) -> Path:
     return (Path(cwd)/p).resolve()
 
 
-def plugin_definition_from_file(filepath: str, 
+def plugin_definition_from_file(filepath: str,
                                 indexfolder:str=""
                                 ) -> Union[Plugin, ErrorMsg]:
     """
@@ -460,8 +464,8 @@ class PluginsIndex:
 
     def is_user_plugins_path_set(self) -> bool:
         """
-        Returns True if the user has already set the user_plugins_path 
-        as part of OPCODE6DIR64. 
+        Returns True if the user has already set the user_plugins_path
+        as part of OPCODE6DIR64.
         """
         opcode6dir64 = os.getenv("OPCODE6DIR64")
         if not opcode6dir64:
@@ -470,7 +474,7 @@ class PluginsIndex:
         userpaths = [_normalize_path(path) for path in opcode6dir64.split(sep)]
         if str(self.user_plugins_path) in userpaths:
             return True
-        if settings['debug']:
+        if SETTINGS['debug']:
             debug("User plugins path not set")
             debug("    user plugins path for this platform: ", str(self.user_plugins_path))
             debug("    OPCODE6DIR64 is set to ", *userpaths)
@@ -483,7 +487,7 @@ class PluginsIndex:
     #             "set_user_plugins_path: This operation can only be done if"
     #             f" OPCODE6DIR64 is not set. This variable is already set to {opcode6dir64}")
     #     if self.platform == "linux":
-    #         _add_line_check("~/.pam_environment", "OPCODE6DIR64", 
+    #         _add_line_check("~/.pam_environment", "OPCODE6DIR64",
     #                         f"OPCODE6DIR64 DEFAULT={systempath}:{userpath}")
     #     elif self.platform == "macos":
     #         _add_line_check("~/.bash_profile", "OPCODE6DIR64",
@@ -493,7 +497,7 @@ class PluginsIndex:
 
     def _user_plugins_path_message(self) -> List[str]:
         """
-        Creates a message advising how to modify the environment to 
+        Creates a message advising how to modify the environment to
         add a user plugin path
         """
         sep = _get_path_separator()
@@ -513,9 +517,9 @@ class PluginsIndex:
         elif self.platform == "macos":
             shell = _get_shell()
             # only print this message for users who have not modified their shell,
-            # assuming that someone who modifies it knows in general what they are 
+            # assuming that someone who modifies it knows in general what they are
             # doing
-            if shell == "bash": 
+            if shell == "bash":
                 _("To set a user path for plugins add the following line to ~/.bash_profile:\n")
                 _(f"    export OPCODE6DIR64=\"{systempath}:{userpath}\"\n")
         return lines
@@ -568,7 +572,7 @@ class PluginsIndex:
             return []
         ext = _plugin_extension()
         return list(self.system_plugins_path.glob("*" + ext))
-        
+
     def get_installed_dlls(self) -> List[Path]:
         """
         Returns a list of all dlls installed in this system
@@ -585,13 +589,13 @@ class PluginsIndex:
         dll, user_installed = self.get_installed_path_for_libname(libname)
         if dll:
             return True
-        if settings['debug']:
+        if SETTINGS['debug']:
             debug(f">>>> {dll} not installed. Installed dlls:")
             installed_dlls = self.get_installed_dlls()
             for dll in sorted(installed_dlls):
                 debug("    ", dll.name, str(dll))
         return False
-        
+
     def get_installed_path_for_libname(self, libname:str) -> Tuple[Optional[Path], bool]:
         """
         Returns (path to dll, user_installed)
@@ -657,7 +661,7 @@ class PluginsIndex:
                 installed_version = result['version']
                 installed_manifest_path = manifest
                 break
-        
+
         out = InstalledPluginInfo(
             name = plugin.name,
             path = dll,
@@ -680,7 +684,7 @@ class PluginsIndex:
             debug(f"Plugin {plugin_name} is not installed")
             return None
         return info.versionstr
-        
+
     def get_installed_manifests(self) -> List[Path]:
         """
         Return a list of all installed manifests
@@ -696,7 +700,7 @@ class PluginsIndex:
         Returns the path to were installation manifests are saved in this system
         """
         return self.get_data_dir() / "installed/manifests"
-        
+
     def get_data_dir(self) -> Path:
         """
         Return the data dir corresponding to risset
@@ -927,7 +931,7 @@ def cmd_show(plugins_index: PluginsIndex, args) -> bool:
     opcstrs = textwrap.wrap(", ".join(plugdef.opcodes), 72)
     for s in opcstrs:
         print(" "*3, s)
-    
+
     print(f"Minimal csound version : {plugdef.csound_version}")
     print()
     return True
@@ -1082,7 +1086,7 @@ def main():
 
     args = parser.parse_args()
     if args.debug:
-        settings['debug'] = True
+        SETTINGS['debug'] = True
 
     if args.version:
         print(VERSION)

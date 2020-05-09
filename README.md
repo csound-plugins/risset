@@ -1,3 +1,5 @@
+![risset](assets/risset-title.png)
+
 # risset: a package manager for csound
 
 This is the repository of risset, a package manager for csound external
