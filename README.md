@@ -8,7 +8,7 @@ repository at [risset-data](https://github.com/csound-plugins/risset-data)
 
 # Installation
 
-`risset` depends only on `git` and `python3` (>= 3.6) being installed. For linux this is 
+`risset` depends only on `git` and `python3` (>= 3.6) being installed. For linux this is
 already the case, for macos and windows both need to be installed.
 
 ```
@@ -92,7 +92,7 @@ Install one or multiple plugins
     $ risset install <plugin> [<plugin2>, ...]
 
 Install a given plugin for the current platform. Plugins are installed into
-the system folder where all other builtin plugins are installed (this requires administrator rights in some platforms). 
+the system folder where all other builtin plugins are installed (this requires administrator rights in some platforms).
 If the `--user` flag is given, plugins are installed into the user path:
 
 * linux: `$HOME/.local/share/csound6/plugins64`
@@ -100,9 +100,9 @@ If the `--user` flag is given, plugins are installed into the user path:
 * windows: `C:\Users\<username>\AppData\Local\csound6\plugins64`
 
 In order for the `--user` option to be available the user should have modified its `OPCODE6DIR64`
-environment variable to include both the system plugin path and this path. If you attempt to install 
-a plugin with the `--user` flag and your system is not correctly setup, `risset` will fail and inform 
-you how to modify your `OPCODE6DIR64` variable to set it up correctly. 
+environment variable to include both the system plugin path and this path. If you attempt to install
+a plugin with the `--user` flag and your system is not correctly setup, `risset` will fail and inform
+you how to modify your `OPCODE6DIR64` variable to set it up correctly.
 
 
 #### remove
@@ -110,7 +110,7 @@ you how to modify your `OPCODE6DIR64` variable to set it up correctly.
 Remove an installed plugin
 
     $ risset remove <plugin>
-    
+
 #### documentation
 
 Open man page in default browser
@@ -132,7 +132,7 @@ Documentation for all plugins can be found here: https://github.com/csound-plugi
 
 -------
 
-# Upgrading risset 
+# Upgrading risset
 
 If installed via `pip`, do:
 
@@ -191,7 +191,7 @@ should correspond to the name of the plugin: "myplugin.json"
         },
         "windows": "..."
     },
-    "manual": "manual_zip_download_url",
+    "doc": "rel/path/to/docfolder",
     "opcodes": ["foo", "bar", "baz"],
     "author": "Plugin Author",
     "email": "author@email.org",
@@ -217,13 +217,15 @@ the manifest itself.
 * `binaries`: A dictionary with platforms as keys. Possible platforms: "linux", "macos", "windows".
     The value for each entry should be itself a dictionary of the form:
     * `url`: the path to the shared binary itself (relative to the manifest), or
-    a downloadable url pointing to the shared library.
+    a downloadable url pointing to the shared library. At the moment only path are supported
     * `extra_binaries`: an **optional** field holding an array of other binaries needed
     * `build_platform`: a string identifying the platform used to build the binary
-* `manual`: A path/url to a .zip file holding one .md file for each opcode
+* `doc`: (optional) A relative path to the folder holding the man pages for the opcodes.
+    Defaults to a folder named "doc" besides the manifest file
 * `opcodes`: A list of all opcodes included in this plugin (for documentation purposes)
 * `author`: The name of the author / mainteiner
 * `email`: email of the author / mainteiner
+* `repository`: the URL were the source code for this plugin is hosted
 
 ### Platform support
 
