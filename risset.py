@@ -19,7 +19,8 @@ VERSION = "0.1.7"
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
 SETTINGS = {
-    'debug': False
+    'debug': False,
+    'update-git': True
 }
 
 
@@ -68,9 +69,16 @@ class Plugin:
     opcodes: List[str]
     author: str
     email: str
+    manifest_path: Path
     long_description: str = ""
-    manual: str = ""
-    source: str = ""   # The path/url of the manifest
+    doc_folder: str = ""
+
+
+@dataclasses.dataclass
+class Opcode:
+    name: str
+    plugin: str
+    syntaxes: Optional[List[str]] = None
 
 
 @dataclasses.dataclass
@@ -107,6 +115,7 @@ def _get_path_separator() -> str:
 
 def _get_platform() -> str:
     """Returns one of "linux", "macos", "windows" """
+    # TODO: add support for arm linux (raspi, etc.)
     return {
         'linux': 'linux',
         'darwin': 'macos',
@@ -328,7 +337,7 @@ def _parse_binary(platform:str, binary_definition:dict) -> Union[Binary, ErrorMs
     return Binary(platform=platform, url=url, build_platform=build_platform)
 
 
-def _plugin_from_dict(d: dict) -> Plugin:
+def _plugin_from_dict(d: dict, manifest_path: Path) -> Plugin:
     def get_key(key):
         value = d.get(key)
         if value is None:
@@ -349,6 +358,10 @@ def _plugin_from_dict(d: dict) -> Plugin:
 
     if not binaries:
         raise PluginDefinitionError("No valid binaries defined")
+
+    opcodes = get_key('opcodes')
+    opcodes.sort()
+
     return Plugin(
         name=get_key('name'),
         libname=get_key('libname'),
@@ -357,10 +370,11 @@ def _plugin_from_dict(d: dict) -> Plugin:
         author=get_key('author'),
         email=get_key('email'),
         csound_version=get_key('csound_version'),
-        opcodes=get_key('opcodes'),
+        opcodes=opcodes,
         binaries=binaries,
-        manual=d.get('manual', ''),
-        long_description=d.get('long_description', ''),
+        manifest_path=manifest_path,
+        doc_folder=d.get('doc', ''),
+        long_description=d.get('long_description', '')
     )
 
 
@@ -412,10 +426,9 @@ def plugin_definition_from_file(filepath: str,
     debug(f"Parsing {path}")
     d = json.load(open(path))
     try:
-        plugin = _plugin_from_dict(d)
+        plugin = _plugin_from_dict(d, manifest_path=path)
     except PluginDefinitionError as e:
         raise e
-    plugin.source = str(path)
     return plugin
 
 
@@ -450,9 +463,10 @@ def _normalize_path(path:str) -> str:
 
 class PluginsIndex:
 
-    def __init__(self, version:str, plugins:List[Plugin]):
+    def __init__(self, version:str, plugins:List[Plugin], git_repo:Path):
         self.version = version
         self.plugins = plugins
+        self.git_repo = git_repo
         self.platform = _get_platform()  # linux, macos, windows
         self.csoundlib = "CsoundLib64"
         self.apiversion = "6.0"
@@ -703,7 +717,12 @@ class PluginsIndex:
 
     def get_data_dir(self) -> Path:
         """
-        Return the data dir corresponding to risset
+        Return the data dir corresponding to risset. This is were we can copy our own
+        data
+
+        * Linux: ~/.local/share/risset
+        * macos: ~/Library/Application Support/risset
+        * C:/Users/$USERNAME/AppData/Local/risset
         """
         return _data_dir_for_platform() / "risset"
 
@@ -791,6 +810,94 @@ class PluginsIndex:
         return [plugin.name for plugin in self.plugins
                 if fnmatch.fnmatch(plugin.name, pattern)]
 
+    def defined_opcodes(self) -> List[Opcode]:
+        """
+        Returns a list of defined opcodes
+        """
+        opcodes = []
+        for plugin in self.plugins:
+            for opcode in plugin.opcodes:
+                opcode = Opcode(name=opcode, plugin=plugin.name)
+                opcodes.append(opcode)
+        return opcodes
+
+    def expand_opcode_glob(self, pattern:str) -> List[Opcode]:
+        """
+        Given a glob pattern, match it against known opcodes. Returns
+        a list of matched opcodes (the list might be empty)
+        """
+        opcodes = self.defined_opcodes()
+        return [opcode for opcode in opcodes
+                if fnmatch.fnmatch(opcode.name, pattern)]
+
+    def find_manpage(self, plugin:str, opcode:str, markdown=False) -> Optional[Path]:
+        """
+        Find the man page for the given opcode defined in the given plugin
+        If markdown is True, search for the .md file, otherwise search the
+        html documentation in the data repo
+        """
+        if markdown:
+            # find the markdown file in the plugin doc folder
+            doc_folder = self.find_doc_folder(plugin)
+            if not doc_folder:
+                debug(f"find_manpage: Plugin {plugin} has no documentation folder, "
+                      f"manpage for {opcode} could not be found")
+                return None
+            manpage = doc_folder / (opcode + ".md")
+            if not manpage.exists():
+                debug(f"find_manpage: Could not find manpage for {opcode}. Searched for {str(manpage)}")
+                return None
+            return manpage
+        # find the html file as generated via mkdocs
+        html_folder = self.find_html_folder()
+        if html_folder is None:
+            debug(f"find_manpage: can't find html manpage for opcode {opcode}, htlm folder does not exist")
+            return None
+        html_manpage = html_folder / "opcodes" / (opcode + ".html")
+        if not html_manpage.exists():
+            debug(f"find_manpage: Could not find html manpage for opcode {opcode}")
+            debug("    Expected path: ", str(html_manpage))
+            return None
+        return html_manpage
+
+    def find_html_folder(self) -> Optional[Path]:
+        """
+        The html folder is generated via mkdocs in the risset-data repository
+        (after having called scripts/generate_documentation.py in risset-data)
+
+        It is placed at the root of the git repo under the name "site"
+        """
+        html_folder = self.git_repo / "site"
+        if not html_folder.exists():
+            debug(f"html folder does not exist. Searched in {html_folder}")
+            return None
+        return html_folder
+
+    def find_doc_folder(self, pluginname: str) -> Optional[Path]:
+        """
+        Find the doc folder as defined in the manifest for the given plugin
+        The manifest can define a doc folder via a 'doc' key, with a folder
+        relative to the manifest itself. If not defined in the manifest, the
+        doc folder defaults to a "doc" folder besides the manifest itself
+
+        If no doc folder is actually found, None is returned
+        """
+        plugin = self.find_plugin(pluginname)
+        if not plugin:
+            debug(f"Plugin {pluginname} not found")
+            return None
+        relative_doc_folder = plugin.doc_folder
+        if relative_doc_folder:
+            doc_folder = resolve_path(relative_doc_folder, plugin.manifest_path.as_posix())
+            if not doc_folder.exists():
+                raise OSError(f"doc folder declared as {doc_folder} in manifest, but does not exist")
+            return doc_folder
+        # No declared doc folder, use default
+        default_doc_folder = plugin.manifest_path.parent / "doc"
+        if default_doc_folder.exists():
+            return default_doc_folder
+        return None
+
 
 class IndexParser:
     def __init__(self):
@@ -822,9 +929,8 @@ class IndexParser:
         gitpath = self._get_path_of_git_repository()
         if not gitpath.exists():
             _git_clone(GIT_REPOSITORY, gitpath)
-        else:
+        elif SETTINGS['update-git']:
             _git_update(gitpath)
-
 
     def parse(self) -> Union[PluginsIndex, ErrorMsg]:
         index_text = load_text(self.index.as_posix())
@@ -860,9 +966,10 @@ class IndexParser:
                 continue
             plugin_definitions.append(result)
         index_version = d.get('version', '0.0.0')
-        plugins_index = PluginsIndex(version=index_version, plugins=plugin_definitions)
+        plugins_index = PluginsIndex(version=index_version, plugins=plugin_definitions,
+                                     git_repo=self._get_path_of_git_repository())
         if plugins_index.system_plugins_path is None:
-            return ErrorMsg("Could not find syste plugins folder")
+            return ErrorMsg("Could not find system plugins folder")
         return plugins_index
 
 
@@ -1038,6 +1145,57 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
     return True
 
 
+def open_in_default_application(path: str):
+    """
+    Open path with the app defined to handle it by the user
+    at the os level (xdg-open in linux, start in win, open in osx)
+    """
+    platform = sys.platform
+    if platform == 'linux':
+        subprocess.call(["xdg-open", path])
+    elif platform == "win32":
+        os.startfile(path)
+    elif platform == "darwin":
+        subprocess.call(["open", path])
+    else:
+        raise RuntimeError(f"platform {platform} not supported")
+
+
+def cmd_man(plugins_index:PluginsIndex, args) -> bool:
+    """
+    Show man page for an installed opcode
+
+    Returns True if success
+
+    Flags:
+        --markdown  - Use .md file instead of .html version
+        --path      - Do not open manpage, only print the path
+
+        opcode      - opcode(s) to get manpage of. Can be a wildcard
+    """
+    opcodes = []
+    for pattern in args.opcode:
+        matched = plugins_index.expand_opcode_glob(pattern)
+        if matched:
+            opcodes.extend(matched)
+    if not opcodes:
+        debug(f"man: no opcodes found")
+        return False
+    for opcode in opcodes:
+        debug(f"man: processing opcode {opcode}")
+        path = plugins_index.find_manpage(opcode.plugin, opcode.name, markdown=args.markdown)
+        if not path:
+            errormsg(f"No manpage for opcode {opcode.name}")
+            continue
+        if args.path:
+            # just print the path
+            print(f"{opcode.name}:{str(path)}")
+        else:
+            # open it in the default application
+            open_in_default_application(str(path))
+    return True
+
+
 def add_flag(parser, flag, help=""):
     parser.add_argument(flag, action="store_true", help=help)
 
@@ -1055,6 +1213,7 @@ def main():
     # Main parser
     parser = argparse.ArgumentParser()
     add_flag(parser, "--debug", help="Print debug information")
+    add_flag(parser, "--noupdate", help="Skip updating the plugins data. Usefull when using risset repeatedly")
     add_flag(parser, "--version")
     subparsers = parser.add_subparsers(dest='command')
 
@@ -1084,9 +1243,21 @@ def main():
     show_group.add_argument("plugin", help="Plugin to gather information about")
     show_group.set_defaults(func=cmd_show)
 
+    # man command
+    man_group = subparsers.add_parser("man", help="Open manual page for an installed opcode. "
+                                                  "Multiple opcodes or a glob wildcard are allowed")
+    man_group.add_argument("--path", action="store_true",
+                           help="Only print the path of the manual page. The format is <opcode>:<path>")
+    man_group.add_argument("--markdown", action="store_true", help="Use the .md page instead of the .html version")
+    man_group.add_argument("opcode", nargs="+", help="Show the manual page of this opcode/opcodes")
+    man_group.set_defaults(func=cmd_man)
+
     args = parser.parse_args()
     if args.debug:
         SETTINGS['debug'] = True
+
+    if args.noupdate:
+        SETTINGS['update-git'] = False
 
     if args.version:
         print(VERSION)
@@ -1095,6 +1266,9 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(-1)
+
+    if args.command == "_complete":
+        SETTINGS['update-git'] = False
 
     try:
         index_parser = IndexParser()
