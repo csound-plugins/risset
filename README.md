@@ -3,7 +3,7 @@
 # risset: a package manager for csound
 
 This is the repository of risset, a package manager for csound external
-plugins and user-defined-opcodes. All plugins are kept in a separate
+plugins and user-defined-opcodes. Plugin binaries and documentation is kept in a separate
 repository at [risset-data](https://github.com/csound-plugins/risset-data)
 
 # Installation
@@ -57,11 +57,6 @@ Platforms  :
 Opcodes    :
              poly, polyseq, poly0
 
-# Show documentation of a given opcode in the default browser
-
-$ risset doc poly
-
-
 # Remove a plugin
 
 $ risset remove poly
@@ -114,6 +109,11 @@ Remove an installed plugin
 
     $ risset remove <plugin>
     
+
+# Plugin Documentation
+
+Documentation for all plugins can be found here: https://github.com/csound-plugins/risset-data/tree/master/docs
+
 -------
 
 # Upgrading risset 
