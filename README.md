@@ -41,6 +41,7 @@ $ risset list
 
 $ risset install else jsfx
 
+
 # Show information about a specific package
 
 $ risset show poly
@@ -62,9 +63,10 @@ Opcodes    :
 $ risset remove poly
 
 
-# Check for plugin updates
+# See manual page for an opcode (installed or not)
 
-$ risset update
+$ risset man poly
+
 
 ```
 
@@ -109,6 +111,20 @@ Remove an installed plugin
 
     $ risset remove <plugin>
     
+#### documentation
+
+Open man page in default browser
+
+    $ risset man <opcode>
+
+Get the path to the .html man page
+
+    $ risset man --path <opcode>
+
+The same, but get the path to the markdown man page
+
+    $ risset man --path --markdown <opcode>
+
 
 # Plugin Documentation
 
