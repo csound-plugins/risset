@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
-VERSION = "0.1.8"
+VERSION = "0.2.1"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -71,6 +71,11 @@ class Plugin:
     manifest_path: Path
     long_description: str = ""
     doc_folder: str = ""
+
+    def asdict(self) -> dict:
+        d = dataclasses.asdict(self)
+        d['manifest_path'] = str(self.manifest_path)
+        return d
 
 
 @dataclasses.dataclass
@@ -143,6 +148,14 @@ def _get_binary(binary) -> Optional[str]:
     return path if path else None
 
 
+def _get_git_binary() -> str:
+    path = shutil.which("git")
+    if not path:
+        raise RuntimeError("git binary not found")
+    assert os.path.exists(path)
+    return path
+
+
 def _git_clone(repo:str, destination:Path) -> None:
     """
     Clone the given repository to the destination.
@@ -153,7 +166,10 @@ def _git_clone(repo:str, destination:Path) -> None:
         raise ValueError("Destination should be an absolute path")
     if destination.exists():
         raise OSError("Destination path already exists, can't clone git repository")
-    gitbin = _get_binary("git")
+    gitbin = _get_git_binary()
+    if gitbin is None:
+        raise RuntimeError("git binary could not be found")
+
     parent = destination.parent
     if not parent.exists():
         parent.mkdir(parents=True, exist_ok=True)
@@ -172,7 +188,7 @@ def _git_update(repopath:Path) -> None:
     debug(f"Updating git repository: {repopath}")
     if not repopath.exists():
         raise OSError(f"Can't find path to git repository {repopath}")
-    gitbin = _get_binary("git")
+    gitbin = _get_git_binary()
     cwd = os.path.abspath(os.path.curdir)
     os.chdir(str(repopath))
     if SETTINGS['debug']:
@@ -734,18 +750,18 @@ class PluginsIndex:
 
     def get_plugin_dll(self, plugin:Plugin) -> Union[Path, ErrorMsg]:
         """
-        If the dll is a local file, just returns the absolute path,
-        otherwise it downloads the binary to a temporary file and
-        returns that path
+        Returns the path to the binary as defined in the manifest
         """
         binary_definition = plugin.binaries.get(self.platform)
         if not binary_definition:
             defined_platforms = ", ".join(plugin.binaries.keys())
-            error = ErrorMsg(f"No binary defined for platform {self.platform}."
-                             f" Available platforms for {plugin.name}: {defined_platforms}")
+            return ErrorMsg(f"No binary defined for platform {self.platform}."
+                            f" Available platforms for {plugin.name}: {defined_platforms}")
+
         # The manifest defines a path. If it is relative, it is relative to the
         # manifest itself.
-        path = resolve_path(binary_definition.url, Path(plugin.source).parent.as_posix())
+        path = resolve_path(binary_definition.url, Path(plugin.manifest_path).parent.as_posix())
+        debug(f"get_plugin_dll: resolved path = {str(path)}")
         if not path.exists():
             return ErrorMsg(f"Binary not found. Given path was: {str(path)}")
         return path
@@ -788,13 +804,13 @@ class PluginsIndex:
         manifests_path = self.get_installed_manifests_path()
         if not manifests_path.exists():
             manifests_path.mkdir(parents=True)
-        manifest = dataclasses.asdict(plugin)
+        manifest = plugin.asdict()
         manifest['build_platform'] = plugin.binaries[self.platform].build_platform
         manifest_path = manifests_path / f"{plugin.name}.json"
         try:
             manifest_json = json.dumps(manifest, indent=True)
         except Exception as e:
-            errormsg(str(e))
+            errormsg("install_plugin: error saving manifest: " + str(e))
             return ErrorMsg("Error when dumping manifest to json")
 
         with open(manifest_path.as_posix(), "w") as f:
@@ -818,9 +834,8 @@ class PluginsIndex:
         """
         opcodes = []
         for plugin in self.plugins:
-            for opcode in plugin.opcodes:
-                opcode = Opcode(name=opcode, plugin=plugin.name)
-                opcodes.append(opcode)
+            for opcodename in plugin.opcodes:
+                opcodes.append(Opcode(name=opcodename, plugin=plugin.name))
         return opcodes
 
     def expand_opcode_glob(self, pattern:str) -> List[Opcode]:
