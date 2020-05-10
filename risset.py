@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+import sys
+
+if (sys.version_info.major, sys.version_info.minor) < (3, 7):
+    print("Python 3.7 or higher is needed", file=sys.stderr)
+    sys.exit(-1)
 
 import os
 import argparse
-import dataclasses
 import json
-import sys
 import tempfile
 import shutil
 import subprocess
@@ -14,7 +17,8 @@ from urllib.parse import urlparse
 from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
-VERSION = "0.2.1"
+
+VERSION = "0.2.2"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -1206,10 +1210,10 @@ def cmd_man(plugins_index:PluginsIndex, args) -> bool:
         if matched:
             opcodes.extend(matched)
     if not opcodes:
-        debug(f"man: no opcodes found")
+        debug("man: no opcodes found")
         return False
     for opcode in opcodes:
-        debug(f"man: processing opcode {opcode}")
+        debug("man: processing opcode ", opcode)
         path = plugins_index.find_manpage(opcode.plugin, opcode.name, markdown=args.markdown)
         if not path:
             errormsg(f"No manpage for opcode {opcode.name}")
@@ -1235,7 +1239,7 @@ def add_flag(parser, flag, help=""):
 def main():
     # Preliminary checks
     if sys.platform not in ("linux", "darwin", "win32"):
-        errormsg("Platform not supported: {sys.platform}")
+        errormsg(f"Platform not supported: {sys.platform}")
         sys.exit(-1)
 
     if _get_binary("git") is None:
@@ -1251,14 +1255,14 @@ def main():
 
     # List command
     list_group = subparsers.add_parser('list', help="List packages")
-    add_flag(list_group, "--json", help="Outputs list as json")
+    add_flag(list_group, "--json", help="Outputs list as json (not implemented yet)")
     add_flag(list_group, "--all", "List all plugins, even those without a binary for the current platform")
-    list_group.add_argument("-o", "--outfile", help="Outputs to a file")
+    list_group.add_argument("-o", "--outfile", help="Outputs to a file (not implemented yet)")
     list_group.set_defaults(func=cmd_list)
 
     # Install command
     install_group = subparsers.add_parser("install", help="Install a package")
-    add_flag(install_group, "--user", help="Install in user folder")
+    add_flag(install_group, "--user", help="Install in user folder (not supported)")
     add_flag(install_group, "--force", help="Force install/reinstall")
     install_group.add_argument("plugins", nargs="+",
                                help="Name of the plugin/plugins to install. "
