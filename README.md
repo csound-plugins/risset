@@ -8,7 +8,7 @@ repository at [risset-data](https://github.com/csound-plugins/risset-data)
 
 # Installation
 
-`risset` depends only on `git` and `python3` (>= 3.6) being installed. For linux this is
+`risset` depends only on `git` and `python3` (>= 3.7) being installed. For linux this is
 already the case, for macos and windows both need to be installed.
 
 ```
