@@ -20,7 +20,6 @@ GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
 SETTINGS = {
     'debug': False,
-    'update-git': True
 }
 
 
@@ -208,7 +207,7 @@ def _sudo_rm(path: str) -> Optional[ErrorMsg]:
         raise PlatformNotSupportedError("This function cannot be called in windows")
 
     debug(f"(sudo) rm {path}")
-    print(f"\n** Administrator rights needed to remove {path}\n **")
+    print(f"\n** Administrator rights needed to remove {path} **\n")
     try:
         subprocess.call(["sudo", "rm", "-i", path])
     except KeyboardInterrupt:
@@ -475,6 +474,9 @@ class PluginsIndex:
         self.user_plugins_path = self.get_user_plugins_path()
         if self.system_plugins_path is None:
             errormsg("Could not find the system plugin folder")
+
+    def update_git_repository(self) -> None:
+        _git_update(self.git_repo)
 
     def is_user_plugins_path_set(self) -> bool:
         """
@@ -906,7 +908,7 @@ class IndexParser:
         The git repository holding the metadata/binaries is cloned/updated and
         the index defined in it is used. After that all files are accesses localy.
         """
-        self.update_git_repository()
+        self.clone_git_repository_if_needed()
         self.index_folder: Path = self._get_path_of_git_repository()
         self.index: Path = self.index_folder / "plugins.json"
         assert self.index.exists()
@@ -922,15 +924,19 @@ class IndexParser:
         else:
             raise RuntimeError(f"Platform {sys.platform} not supported")
 
+    def clone_git_repository_if_needed(self):
+        gitpath = self._get_path_of_git_repository()
+        if gitpath.exists():
+            return
+        _git_clone(GIT_REPOSITORY, gitpath)
+
     def update_git_repository(self) -> None:
         """
         Update the data repository. Clone if first time
         """
+        self.clone_git_repository_if_needed()
         gitpath = self._get_path_of_git_repository()
-        if not gitpath.exists():
-            _git_clone(GIT_REPOSITORY, gitpath)
-        elif SETTINGS['update-git']:
-            _git_update(gitpath)
+        _git_update(gitpath)
 
     def parse(self) -> Union[PluginsIndex, ErrorMsg]:
         index_text = load_text(self.index.as_posix())
@@ -977,6 +983,7 @@ class IndexParser:
 #                        Subcommands                          #
 ###############################################################
 
+
 def cmd_list(plugins_index:PluginsIndex, args):
     """
     Lists all plugins available for download
@@ -1010,6 +1017,7 @@ def cmd_list(plugins_index:PluginsIndex, args):
             for line in extra_lines:
                 print(" "*leftcolwidth + f"   |   ", line)
     print()
+
 
 def cmd_show(plugins_index: PluginsIndex, args) -> bool:
     """
@@ -1105,6 +1113,10 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
     Args:
         plugin   - name of the plugin to install
     """
+    if args.user:
+        errormsg("The --user flag has been deprecated until csound itself implements a user opcodes folder")
+        return False
+
     allplugins = []
     for pattern in args.plugins:
         matched = plugins_index.expand_plugin_glob(pattern)
@@ -1196,6 +1208,11 @@ def cmd_man(plugins_index:PluginsIndex, args) -> bool:
     return True
 
 
+def cmd_update(plugins_index:PluginsIndex, args) -> bool:
+    plugins_index.update_git_repository()
+    return True
+
+
 def add_flag(parser, flag, help=""):
     parser.add_argument(flag, action="store_true", help=help)
 
@@ -1213,7 +1230,7 @@ def main():
     # Main parser
     parser = argparse.ArgumentParser()
     add_flag(parser, "--debug", help="Print debug information")
-    add_flag(parser, "--noupdate", help="Skip updating the plugins data. Usefull when using risset repeatedly")
+    add_flag(parser, "--update", help="Update the plugins data before any action")
     add_flag(parser, "--version")
     subparsers = parser.add_subparsers(dest='command')
 
@@ -1252,12 +1269,13 @@ def main():
     man_group.add_argument("opcode", nargs="+", help="Show the manual page of this opcode/opcodes")
     man_group.set_defaults(func=cmd_man)
 
+    # update command
+    update_group = subparsers.add_parser("update", help="Update repository")
+    update_group.set_defaults(func=cmd_update)
+
     args = parser.parse_args()
     if args.debug:
         SETTINGS['debug'] = True
-
-    if args.noupdate:
-        SETTINGS['update-git'] = False
 
     if args.version:
         print(VERSION)
@@ -1266,9 +1284,6 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(-1)
-
-    if args.command == "_complete":
-        SETTINGS['update-git'] = False
 
     try:
         index_parser = IndexParser()
@@ -1280,6 +1295,9 @@ def main():
     if isinstance(plugins_index, ErrorMsg):
         errormsg(plugins_index)
         sys.exit(-1)
+
+    if args.update:
+        index_parser.update_git_repository()
 
     ok = args.func(plugins_index, args)
     if not ok:
