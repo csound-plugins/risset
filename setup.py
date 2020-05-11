@@ -21,7 +21,7 @@ setup(
     py_modules=["risset"],
     install_requires = [
         "dataclasses"
-    ]
+    ],
 
     url="https://github.com/csound-plugins/risset",
 
