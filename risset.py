@@ -295,7 +295,7 @@ def _find_opcodes_dir(possible_dirs) -> Optional[Path]:
     the system plugins are installed
     """
     ext = _plugin_extension()
-    debug("Finding opcodes dir: ")
+    debug("> Searching opcodes dir: ")
 
     if sys.platform == "win32":
         portaudio_dll = "rtpa.dll"
@@ -303,19 +303,21 @@ def _find_opcodes_dir(possible_dirs) -> Optional[Path]:
         portaudio_dll = "librtpa" + ext
 
     for d in possible_dirs:
-        debug("   > looking at ", d)
+        debug("  >> looking at ", d)
         d = _normalize_path(d)
         path = Path(d)
         if not path.is_dir() or not path.exists():
+            debug("  >>> path does not exist...")
             continue
         plugins = list(path.glob("*" + ext))
         if not plugins:
-            debug(f"Path {d} exists, but has no plugins, skipping")
+            debug(f"  >>> path {d} exists, but has no plugins, skipping")
             continue
         if any(plugin for plugin in plugins if portaudio_dll == plugin.name):
+            debug("  >>> Found!")
             return path
-        errormsg(f"Found plugins dir {d}, but it does not seem to be the systems"
-                 f" plugin path ({portaudio_dll} should be present but was not found)")
+        debug(f"Found plugins dir {d}, but it does not seem to be the systems plugin path"
+              f"  ({portaudio_dll} was not found there)")
     return None
 
 
@@ -592,7 +594,7 @@ class PluginsIndex:
                 _(f"    export OPCODE6DIR64=\"{systempath}:{userpath}\"\n")
         return lines
 
-    def get_system_plugins_path(self) -> Optional[Path]:
+    def get_default_system_plugins_path(self) -> List[str]:
         if self.platform == 'linux':
             possible_dirs = ["/usr/local/lib/csound/plugins64-6.0", "/usr/lib/csound/plugins64-6.0"]
         elif self.platform == 'macos':
@@ -606,7 +608,19 @@ class PluginsIndex:
         elif self.platform == "windows":
             possible_dirs = ["C:\\Program Files\\Csound6_x64\\plugins64"]
         else:
-            return None
+            raise PlatformNotSupportedError(f"Platform {self.platform} not supported")
+        return possible_dirs
+
+    def get_system_plugins_path(self) -> Optional[Path]:
+        """
+        Get the path were system plugins are installed.
+        """
+        # first check if the user has set OPCODE6DIR64
+        opcode6dir64 = os.getenv("OPCODE6DIR64")
+        if opcode6dir64:
+            possible_dirs = opcode6dir64
+        else:
+            possible_dirs = self.get_default_system_plugins_path()
 
         out = _find_opcodes_dir(possible_dirs)
         if not out:
