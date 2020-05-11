@@ -302,9 +302,9 @@ def _find_opcodes_dir(possible_dirs) -> Optional[Path]:
     debug("> Searching opcodes dir: ")
 
     if sys.platform == "win32":
-        portaudio_dll = "rtpa.dll"
+        dll = "arrayops.dll"
     else:
-        portaudio_dll = "librtpa" + ext
+        dll = "libarrayops" + ext
 
     for d in possible_dirs:
         debug("  >> looking at ", d)
@@ -317,11 +317,12 @@ def _find_opcodes_dir(possible_dirs) -> Optional[Path]:
         if not plugins:
             debug(f"  >>> path {d} exists, but has no plugins, skipping")
             continue
-        if any(plugin for plugin in plugins if portaudio_dll == plugin.name):
+        if any(plugin for plugin in plugins if dll == plugin.name):
             debug("  >>> Found!")
             return path
         debug(f"Found plugins dir {d}, but it does not seem to be the systems plugin path"
-              f"  ({portaudio_dll} was not found there)")
+              f"  ({dll} was not found there)")
+        debug("Plugins found here: ", str(plugins))
     return None
 
 
