@@ -1302,8 +1302,8 @@ def main():
         errormsg("git command not found. Check that git is installed and in the PATH")
         sys.exit(-1)
 
-    csound_version = _csound_version()
-    debug(f"Csound version: {csound_version}")
+    # csound_version = _csound_version()
+    # debug(f"Csound version: {csound_version}")
 
     # Main parser
     parser = argparse.ArgumentParser()
