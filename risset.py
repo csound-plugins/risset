@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -129,8 +129,8 @@ def _csound_version() -> Tuple[int, int]:
 
 def _get_csound_opcodes() -> List[str]:
     csound_bin = _get_binary("csound")
-    proc = subprocess.Popen([csound_bin, "-z1"], stderr=subprocess.PIPE)
-    txt = proc.stderr.read().decode('ascii')
+    proc = subprocess.run([csound_bin, "-z1"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    txt = proc.stdout.decode('ascii')
     opcodes = []
     for line in txt.splitlines():
         line = line.strip()
@@ -800,6 +800,9 @@ class PluginsIndex:
         return _data_dir_for_platform() / "risset"
 
     def is_plugin_installed(self, plugin:Plugin) -> bool:
+        if self.platform == "windows":
+            debug("Checking if plugins is installed is not supported in windows")
+            return True
         test = plugin.opcodes[0]
         opcodes = _get_csound_opcodes()
         return test in opcodes
