@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
 
-VERSION = "0.2.4"
+VERSION = "0.2.5"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -475,7 +475,7 @@ def plugin_definition_from_file(filepath: str,
 
     assert path.suffix == ".json", "Plugin definition file should be a .json file"
 
-    debug(f"Parsing {path}")
+    debug("Parsing manifest:", path)
     d = json.load(open(path))
     try:
         plugin = _plugin_from_dict(d, manifest_path=path)
@@ -500,7 +500,7 @@ def load_text(file_or_url:str) -> str:
         return _load_url(file_or_url)
     assert os.path.exists(file_or_url)
     text = open(file_or_url).read()
-    debug(f"load_text: {text}")
+    # debug(f"load_text: \n{text}")
     if not text:
         debug("load_text: empty file")
     return text
@@ -618,7 +618,7 @@ class PluginsIndex:
         # first check if the user has set OPCODE6DIR64
         opcode6dir64 = os.getenv("OPCODE6DIR64")
         if opcode6dir64:
-            possible_dirs = opcode6dir64
+            possible_dirs = opcode6dir64.split(_get_path_separator())
         else:
             possible_dirs = self.get_default_system_plugins_path()
 
