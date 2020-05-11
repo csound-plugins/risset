@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import sys
 
-if (sys.version_info.major, sys.version_info.minor) < (3, 6):
-    print("Python 3.6 or higher is needed", file=sys.stderr)
+if (sys.version_info.major, sys.version_info.minor) < (3, 7):
+    print("Python 3.7 or higher is needed", file=sys.stderr)
     sys.exit(-1)
 
 import os
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
 
-VERSION = "0.2.7"
+VERSION = "0.2.8"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
