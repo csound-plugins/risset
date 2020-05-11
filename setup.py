@@ -19,6 +19,9 @@ setup(
     long_description = long_description,
     long_description_content_type = 'text/markdown',
     py_modules=["risset"],
+    install_requires = [
+        "dataclasses"
+    ]
 
     url="https://github.com/csound-plugins/risset",
 
