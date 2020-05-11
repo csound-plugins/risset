@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
 
-VERSION = "0.2.9"
+VERSION = "0.3.0"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
