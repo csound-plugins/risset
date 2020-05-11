@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
 
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -105,6 +105,36 @@ UNKNOWN_VERSION = "Unknown"
 class PlatformNotSupportedError(Exception): pass
 class PluginDefinitionError(Exception): pass
 class InternalError(Exception): pass
+
+
+def _csound_version() -> Tuple[int, int]:
+    csound_bin = _get_binary("csound")
+    if not csound_bin:
+        raise OSError("csound binary not found")
+    proc = subprocess.Popen([csound_bin, "--version"], stderr=subprocess.PIPE)
+    proc.wait()
+    out = proc.stderr.read().decode('ascii')
+    for line in out.splitlines():
+        if "--Csound version" not in line:
+            continue
+        parts = line.split()
+        versionstr = parts[2]
+        return tuple(int(i) for i in versionstr.split("."))
+    raise ValueError("Could not find a version number in the output")
+
+
+def _get_csound_opcodes() -> List[str]:
+    csound_bin = _get_binary("csound")
+    proc = subprocess.Popen([csound_bin, "-z1"], stderr=subprocess.PIPE)
+    txt = proc.stderr.read().decode('ascii')
+    opcodes = []
+    for line in txt.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        opcodes.append(parts[0])
+    return opcodes
 
 
 def _plugin_extension() -> str:
@@ -491,10 +521,11 @@ class PluginsIndex:
         self.csoundlib = "CsoundLib64"
         self.apiversion = "6.0"
         self.system_plugins_path = self.get_system_plugins_path()
-        debug(f"System plugins path: {self.system_plugins_path}")
-        self.user_plugins_path = self.get_user_plugins_path()
         if self.system_plugins_path is None:
-            errormsg("Could not find the system plugin folder")
+            debug("Could not find the system plugins folder")
+        else:
+            debug(f"System plugins path: {self.system_plugins_path}")
+        self.user_plugins_path = self.get_user_plugins_path()
 
     def update_git_repository(self) -> None:
         _git_update(self.git_repo)
@@ -563,7 +594,7 @@ class PluginsIndex:
 
     def get_system_plugins_path(self) -> Optional[Path]:
         if self.platform == 'linux':
-            possible_dirs = ["/usr/local/lib/csound/plugins64-6.0"]
+            possible_dirs = ["/usr/local/lib/csound/plugins64-6.0", "/usr/lib/csound/plugins64-6.0"]
         elif self.platform == 'macos':
             # The path based on ~ is used when csound is compiled from source.
             # We give that priority since if a user is doing that, it is probably someone who knows
@@ -749,9 +780,10 @@ class PluginsIndex:
         """
         return _data_dir_for_platform() / "risset"
 
-    def check_plugin_installed(self, plugin:Plugin) -> bool:
-        # TODO
-        return True
+    def is_plugin_installed(self, plugin:Plugin) -> bool:
+        test = plugin.opcodes[0]
+        opcodes = _get_csound_opcodes()
+        return test in opcodes
 
     def get_plugin_dll(self, plugin:Plugin) -> Union[Path, ErrorMsg]:
         """
@@ -805,7 +837,12 @@ class PluginsIndex:
         if not (install_path / plugin_dll).exists():
             return ErrorMsg(f"Installation of plugin {plugin.name} failed")
 
-        # Installation succeeded, install manifest
+        # installation succeeded, check that it works
+        if not self.is_plugin_installed(plugin):
+            opcode = plugin.opcodes[0]
+            return ErrorMsg(f"Plugin binary was installed, but opcode {opcode} not present")
+
+        # install manifest
         manifests_path = self.get_installed_manifests_path()
         if not manifests_path.exists():
             manifests_path.mkdir(parents=True)
@@ -1166,7 +1203,7 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
                 errors.append(f"Installed version of plugin {plugin} is up-to-date")
                 errormsg(errors[-1])
                 continue
-            debug(f"Updating plugin {args.plugin}: "
+            print(f"Updating plugin {plugin}: "
                   f"{current_version} -> {plugin_definition.version}")
         error = plugins_index.install_plugin(plugin_definition, user=args.user)
         if error:
@@ -1214,7 +1251,7 @@ def cmd_man(plugins_index:PluginsIndex, args) -> bool:
         debug("man: no opcodes found")
         return False
     for opcode in opcodes:
-        debug("man: processing opcode ", opcode)
+        debug("man: processing opcode ", opcode.name)
         path = plugins_index.find_manpage(opcode.plugin, opcode.name, markdown=args.markdown)
         if not path:
             errormsg(f"No manpage for opcode {opcode.name}")
@@ -1246,6 +1283,9 @@ def main():
     if _get_binary("git") is None:
         errormsg("git command not found. Check that git is installed and in the PATH")
         sys.exit(-1)
+
+    csound_version = _csound_version()
+    debug(f"Csound version: {csound_version}")
 
     # Main parser
     parser = argparse.ArgumentParser()
