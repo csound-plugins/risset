@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
 
-VERSION = "0.2.5"
+VERSION = "0.2.6"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -38,6 +38,10 @@ def errormsg(msg: str) -> None:
     """ Print error message """
     for line in msg.splitlines():
         print("** Error: ", line, file=sys.stderr)
+
+
+def info(*msgs: str) -> None:
+    print(*msgs)
 
 
 def banner(lines: List[str]):
@@ -1193,8 +1197,8 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
         matched = plugins_index.expand_plugin_glob(pattern)
         if matched:
             allplugins.extend(matched)
-    errors = []
     allplugins = list(set(allplugins))  # remove duplicates
+    errors_found = False
     for plugin in allplugins:
         plugin_definition = plugins_index.find_plugin(plugin)
         if plugin_definition is None:
@@ -1204,8 +1208,8 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
         if current_version == UNKNOWN_VERSION:
             # plugin is installed but without a corresponding install manifest.
             if not args.force:
-                errors.append(f"Plugin {plugin} is already installed. Use --force to force reinstall")
-                errormsg(errors[-1])
+                errormsg(f"Plugin {plugin} is already installed. Use --force to force reinstall")
+                errors_found = True
                 continue
         elif current_version is None:
             # plugin is not installed
@@ -1214,16 +1218,15 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
             if version_tuplet(plugin_definition.version) <= version_tuplet(current_version):
                 debug(f"Plugin {plugin_definition.name}, version: {plugin_definition.version}")
                 debug(f"    Installed version: {current_version}")
-                errors.append(f"Installed version of plugin {plugin} is up-to-date")
-                errormsg(errors[-1])
+                info(f"Installed version of plugin {plugin} is up-to-date")
+                errors_found = True
                 continue
-            print(f"Updating plugin {plugin}: "
+            info(f"Updating plugin {plugin}: "
                   f"{current_version} -> {plugin_definition.version}")
         error = plugins_index.install_plugin(plugin_definition, user=args.user)
         if error:
-            errors.append(error)
             errormsg(error)
-    if errors:
+    if errors_found:
         return False
     return True
 
