@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
 
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -1299,6 +1299,12 @@ def cmd_update(plugins_index:PluginsIndex, args) -> bool:
     return True
 
 
+def update_self():
+    """ upgrade risset itself """
+    python = sys.executable
+    subprocess.check_call([python, "-m", "pip", "install", "risset", "--upgrade"])
+
+
 def add_flag(parser, flag, help=""):
     parser.add_argument(flag, action="store_true", help=help)
 
@@ -1388,6 +1394,7 @@ def main():
         index_parser.update_git_repository()
     elif args.command == 'update':
         index_parser.update_git_repository()
+        update_self()
         sys.exit(0)
 
     plugins_index = index_parser.parse()
