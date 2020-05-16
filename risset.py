@@ -1302,6 +1302,7 @@ def cmd_update(plugins_index:PluginsIndex, args) -> bool:
 def update_self():
     """ upgrade risset itself """
     python = sys.executable
+    info("Updating risset")
     subprocess.check_call([python, "-m", "pip", "install", "risset", "--upgrade"])
 
 
