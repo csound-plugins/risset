@@ -980,31 +980,39 @@ class PluginsIndex:
         return None
 
 
+def _default_path_of_git_repository() -> Path:
+    if sys.platform == 'linux':
+        return Path("~/.local/share/risset/risset-data").expanduser()
+    elif sys.platform == 'darwin':
+        return Path("~/Library/Application Support/risset/risset-data").expanduser()
+    elif sys.platform == 'win32':
+        path = os.path.expandvars(R"C:\Users\$USERNAME\AppData\Local\risset\risset-data")
+        return Path(path)
+    else:
+        raise RuntimeError(f"Platform {sys.platform} not supported")
+
+
 class IndexParser:
-    def __init__(self):
+    def __init__(self, repopath:str = None):
         """
         Create an index parser.
         The git repository holding the metadata/binaries is cloned/updated and
         the index defined in it is used. After that all files are accesses localy.
         """
+        if repopath:
+            assert isinstance(repopath, str)
+            if not os.path.exists(repopath):
+                raise OSError("Passed a path to a custom git repository, but that path"
+                              "does not exist (path: %s)" % repopath)
+            self.index_folder = Path(repopath)
+        else:
+            self.index_folder: Path = _default_path_of_git_repository()
         self.clone_git_repository_if_needed()
-        self.index_folder: Path = self._get_path_of_git_repository()
         self.index: Path = self.index_folder / "plugins.json"
         assert self.index.exists()
 
-    def _get_path_of_git_repository(self) -> Path:
-        if sys.platform == 'linux':
-            return Path("~/.local/share/risset/risset-data").expanduser()
-        elif sys.platform == 'darwin':
-            return Path("~/Library/Application Support/risset/risset-data").expanduser()
-        elif sys.platform == 'win32':
-            path = os.path.expandvars(R"C:\Users\$USERNAME\AppData\Local\risset\risset-data")
-            return Path(path)
-        else:
-            raise RuntimeError(f"Platform {sys.platform} not supported")
-
     def clone_git_repository_if_needed(self):
-        gitpath = self._get_path_of_git_repository()
+        gitpath = self.index_folder
         if gitpath.exists():
             return
         _git_clone(GIT_REPOSITORY, gitpath)
@@ -1014,8 +1022,7 @@ class IndexParser:
         Update the data repository. Clone if first time
         """
         self.clone_git_repository_if_needed()
-        gitpath = self._get_path_of_git_repository()
-        _git_update(gitpath)
+        _git_update(self.index_folder)
 
     def parse(self) -> Union[PluginsIndex, ErrorMsg]:
         index_text = load_text(self.index.as_posix())
@@ -1051,8 +1058,9 @@ class IndexParser:
                 continue
             plugin_definitions.append(result)
         index_version = d.get('version', '0.0.0')
-        plugins_index = PluginsIndex(version=index_version, plugins=plugin_definitions,
-                                     git_repo=self._get_path_of_git_repository())
+        plugins_index = PluginsIndex(version=index_version,
+                                     plugins=plugin_definitions,
+                                     git_repo=self.index_folder)
         if plugins_index.system_plugins_path is None:
             return ErrorMsg("Could not find system plugins folder")
         return plugins_index
@@ -1312,6 +1320,10 @@ def main():
     parser = argparse.ArgumentParser()
     add_flag(parser, "--debug", help="Print debug information")
     add_flag(parser, "--update", help="Update the plugins data before any action")
+    parser.add_argument("--repopath", default=None,
+                        help="Use this path to read data instead of "
+                        "the default path. This is only useful when debugging")
+
     add_flag(parser, "--version")
     subparsers = parser.add_subparsers(dest='command')
 
@@ -1367,18 +1379,21 @@ def main():
         sys.exit(-1)
 
     try:
-        index_parser = IndexParser()
+        index_parser = IndexParser(args.repopath)
     except Exception as e:
         errormsg(str(e))
         sys.exit(-1)
+
+    if args.update:
+        index_parser.update_git_repository()
+    elif args.command == 'update':
+        index_parser.update_git_repository()
+        sys.exit(0)
 
     plugins_index = index_parser.parse()
     if isinstance(plugins_index, ErrorMsg):
         errormsg(plugins_index)
         sys.exit(-1)
-
-    if args.update:
-        index_parser.update_git_repository()
 
     ok = args.func(plugins_index, args)
     if not ok:
