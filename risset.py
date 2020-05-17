@@ -1395,7 +1395,7 @@ def main():
         index_parser.update_git_repository()
     elif args.command == 'update':
         index_parser.update_git_repository()
-        update_self()
+        # update_self()
         sys.exit(0)
 
     plugins_index = index_parser.parse()
