@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Union, Optional
 
 
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 
 GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
@@ -719,6 +719,10 @@ class PluginsIndex:
                 return plugin
         return None
 
+    def is_plugin_installed(self, plugin: Plugin) -> bool:
+        dll, user_installed = self.get_installed_path_for_libname(plugin.libname)
+        return dll is not None
+
     def get_installed_plugin_info(self, plugin_name:str) -> Optional[InstalledPluginInfo]:
         """
         Returns an InstalledPluginInfo if found, None otherwise
@@ -892,22 +896,33 @@ class PluginsIndex:
         return [plugin.name for plugin in self.plugins
                 if fnmatch.fnmatch(plugin.name, pattern)]
 
-    def defined_opcodes(self) -> List[Opcode]:
+    def defined_opcodes(self, installed=False) -> List[Opcode]:
         """
         Returns a list of defined opcodes
+
+        Args:
+            installed - if True, only opcodes defined in installed plugins
+                will be listed
         """
         opcodes = []
         for plugin in self.plugins:
+            if installed and not self.is_plugin_installed(plugin):
+                continue
             for opcodename in plugin.opcodes:
                 opcodes.append(Opcode(name=opcodename, plugin=plugin.name))
         return opcodes
 
-    def expand_opcode_glob(self, pattern:str) -> List[Opcode]:
+    def expand_opcode_glob(self, pattern:str, installed=False) -> List[Opcode]:
         """
         Given a glob pattern, match it against known opcodes. Returns
         a list of matched opcodes (the list might be empty)
+
+        Args:
+            pattern: a glob pattern
+            installed: If True, only opcodes belonging to installed plugins
+                will be collected
         """
-        opcodes = self.defined_opcodes()
+        opcodes = self.defined_opcodes(installed=installed)
         return [opcode for opcode in opcodes
                 if fnmatch.fnmatch(opcode.name, pattern)]
 
@@ -1079,7 +1094,6 @@ def cmd_list(plugins_index:PluginsIndex, args):
     leftcolwidth = 20
     for plugin in plugins_index.plugins:
         data = []
-        extra_lines = []
         if plugins_index.platform not in plugin.binaries.keys():
             if not args.all:
                 debug(f"Plugin {plugin.name} has no binary for platform {plugins_index.platform}")
@@ -1087,6 +1101,15 @@ def cmd_list(plugins_index:PluginsIndex, args):
                 continue
             data.append("platform not supported")
         info = plugins_index.get_installed_plugin_info(plugin.name)
+        installed = info is not None
+        if args.installed and not installed:
+            continue
+        if args.notinstalled and installed:
+            continue
+        if args.nameonly:
+            print(plugin.name)
+            continue
+        extra_lines = []
         if info:
             if info.versionstr == UNKNOWN_VERSION:
                 data.append("installed (not by risset)")
@@ -1182,7 +1205,6 @@ def cmd_rm(plugins_index:PluginsIndex, args) -> bool:
         errormsg(err)
     return False
 
-
 def cmd_install(plugins_index:PluginsIndex, args) -> bool:
     """
     Install or upgrade a plugin
@@ -1234,7 +1256,7 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
                 errors_found = True
                 continue
             info(f"Updating plugin {plugin}: "
-                  f"{current_version} -> {plugin_definition.version}")
+                 f"{current_version} -> {plugin_definition.version}")
         error = plugins_index.install_plugin(plugin_definition, user=args.user)
         if error:
             errormsg(error)
@@ -1288,6 +1310,10 @@ def cmd_man(plugins_index:PluginsIndex, args) -> bool:
         if args.path:
             # just print the path
             print(f"{opcode.name}:{str(path)}")
+        elif args.simplepath:
+            print(str(path))
+        elif args.markdown:
+            _show_markdown_file(path)
         else:
             # open it in the default application
             open_in_default_application(str(path))
@@ -1304,6 +1330,58 @@ def update_self():
     python = sys.executable
     info("Updating risset")
     subprocess.check_call([python, "-m", "pip", "install", "risset", "--upgrade"])
+
+
+def cmd_listopcodes(plugins_index:PluginsIndex, args) -> bool:
+    opcodes = plugins_index.defined_opcodes(installed=True)
+    opcodes.sort(key=lambda opcode: opcode.name.lower())
+    for opcode in opcodes:
+        print(opcode.name)
+    return True
+
+def _running_from_terminal():
+    return sys.stdin.isatty()
+
+
+def _print_file(path: Path) -> None:
+    text = open(str(path)).read()
+    print(text)
+
+def _has(cmd: str) -> bool:
+    """ Returns True if cmd is in the path """
+    path = shutil.which(cmd)
+    return path is not None
+
+
+def _show_markdown_file(path: Path) -> None:
+    if not _running_from_terminal():
+        open_in_default_application(str(path))
+        return True
+
+    if sys.platform == 'linux' or sys.platform == 'darwin':
+        if _has("bat"):
+            subprocess.call(["bat", "--style", "header", str(path)])
+        elif _has("pygmentize"):
+            subprocess.call(["pygmentize", str(path)])
+        elif _has("highlight"):
+            #  highlight --force --out-format="${highlight_format}" --style="${HIGHLIGHT_STYLE}"
+            subprocess.call(["highlight", "--force", "--out-format=ANSI", str(path)])
+        else:
+            print("Considere installing 'pygmentize', 'highlight' or 'bat' for better syntax highlighting")
+            print()
+            _print_file(path)
+    else:
+        if _has("bat"):
+            subprocess.call(["bat", "--style", "header", str(path)], shell=True)
+        elif _has("pygmentize"):
+            subprocess.call(["pygmentize", str(path)])
+        elif _has("highlight"):
+            #  highlight --force --out-format="${highlight_format}" --style="${HIGHLIGHT_STYLE}"
+            subprocess.call(["highlight", "--force", "--out-format=ANSI", str(path)])
+        else:
+            print("Considere installing 'highlight', 'bat' or 'pygmentize' for better syntax highlighting")
+            print()
+            _print_file(path)
 
 
 def add_flag(parser, flag, help=""):
@@ -1338,12 +1416,15 @@ def main():
     list_group = subparsers.add_parser('list', help="List packages")
     add_flag(list_group, "--json", help="Outputs list as json (not implemented yet)")
     add_flag(list_group, "--all", "List all plugins, even those without a binary for the current platform")
+    add_flag(list_group, "--nameonly", help="Output just the name of each plugin")
+    add_flag(list_group, "--installed", help="List only installed plugins")
+    add_flag(list_group, "--notinstalled", help="List only plugins which are not installed")
     list_group.add_argument("-o", "--outfile", help="Outputs to a file (not implemented yet)")
     list_group.set_defaults(func=cmd_list)
 
     # Install command
     install_group = subparsers.add_parser("install", help="Install a package")
-    add_flag(install_group, "--user", help="Install in user folder (not supported)")
+    # add_flag(install_group, "--user", help="Install in user folder (not supported)")
     add_flag(install_group, "--force", help="Force install/reinstall")
     install_group.add_argument("plugins", nargs="+",
                                help="Name of the plugin/plugins to install. "
@@ -1363,15 +1444,21 @@ def main():
     # man command
     man_group = subparsers.add_parser("man", help="Open manual page for an installed opcode. "
                                                   "Multiple opcodes or a glob wildcard are allowed")
-    man_group.add_argument("--path", action="store_true",
+    man_group.add_argument("-p", "--path", action="store_true",
                            help="Only print the path of the manual page. The format is <opcode>:<path>")
-    man_group.add_argument("--markdown", action="store_true", help="Use the .md page instead of the .html version")
+    man_group.add_argument("-s", "--simplepath", action="store_true",
+                           help="Print just the path of the manual page")
+    man_group.add_argument("-m", "--markdown", action="store_true", help="Use the .md page instead of the .html version")
     man_group.add_argument("opcode", nargs="+", help="Show the manual page of this opcode/opcodes")
     man_group.set_defaults(func=cmd_man)
 
     # update command
     update_group = subparsers.add_parser("update", help="Update repository")
     update_group.set_defaults(func=cmd_update)
+
+    # list-opcodes
+    listopcodes = subparsers.add_parser("list-opcodes", help="List installed opcodes")
+    listopcodes.set_defaults(func=cmd_listopcodes)
 
     args = parser.parse_args()
     if args.debug:
