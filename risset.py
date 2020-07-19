@@ -1222,9 +1222,9 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
     Args:
         plugin   - name of the plugin to install
     """
-    if args.user:
-        errormsg("The --user flag has been deprecated until csound itself implements a user opcodes folder")
-        return False
+    # if args.user:
+    #     errormsg("The --user flag has been deprecated until csound itself implements a user opcodes folder")
+    #     return False
 
     allplugins = []
     for pattern in args.plugins:
@@ -1257,7 +1257,8 @@ def cmd_install(plugins_index:PluginsIndex, args) -> bool:
                 continue
             info(f"Updating plugin {plugin}: "
                  f"{current_version} -> {plugin_definition.version}")
-        error = plugins_index.install_plugin(plugin_definition, user=args.user)
+        # error = plugins_index.install_plugin(plugin_definition, user=args.user)
+        error = plugins_index.install_plugin(plugin_definition)
         if error:
             errormsg(error)
     if errors_found:
