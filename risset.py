@@ -25,9 +25,9 @@ if TYPE_CHECKING:
     from typing import List, Dict, Tuple, Union, Optional
 
 
-VERSION = "0.3.4"
+__version__ = "0.3.4"
 
-GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
+INDEX_GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
 SETTINGS = {
     'debug': False,
@@ -50,15 +50,26 @@ def _get_platform() -> str:
     return out
 
 
-def _get_clones_path() -> Path:
+def _data_dir_for_platform() -> Path:
     """
-    Returns the path where to clone plugins git repos
+    Returns the data directory for the given platform
+    """
+    platform = sys.platform
+    if platform == 'linux':
+        return Path(os.path.expanduser("~/.local/share"))
+    elif platform == 'darwin':
+        return Path(os.path.expanduser("~/Libary/Application Support"))
+    elif platform == 'win32':
+        p = R"C:\Users\$USERNAME\AppData\Local"
+        return Path(os.path.expandvars(p))
+    else:
+        raise PlatformNotSupportedError(f"Platform unknown: {platform}")
 
-    * linux: ~/.local/share/risset/clones
-    """
-    if (out := _cache.get('clonespath')) is None:
-        _cache['clonespath'] = out = _risset_data_dir() / "clones"
-    return out
+
+RISSET_ROOT = _data_dir_for_platform() / "risset"
+RISSET_DATAREPO_LOCALPATH = RISSET_ROOT / "risset-data"
+RISSET_GENERATED_DOCS = RISSET_ROOT / "man"
+RISSET_CLONES_PATH = RISSET_ROOT / "clones"
 
 
 def _is_git_repo(path: Union[str, Path]) -> bool:
@@ -175,7 +186,7 @@ class PluginSource:
     def __post_init__(self):
         if self.localpath is None:
             reponame = _git_reponame(self.url)
-            self.localpath = _get_clones_path() / reponame
+            self.localpath = RISSET_CLONES_PATH / reponame
 
     def manifest_path(self) -> Path:
         if not self.localpath.exists():
@@ -258,7 +269,7 @@ class Plugin:
         assert not self.manifest_relative_path or not os.path.splitext(self.manifest_relative_path)
 
         if self.cloned_path is None:
-            self.cloned_path = _get_clones_path() / self.name
+            self.cloned_path = RISSET_CLONES_PATH / self.name
 
     def __hash__(self):
         return hash((self.name, self.version))
@@ -339,10 +350,15 @@ UNKNOWN_VERSION = "Unknown"
 
 
 class PlatformNotSupportedError(Exception):
-    pass
+    """Raised when the current platform is not supported"""
+
 
 class PluginDefinitionError(Exception):
-    pass
+    """The plugin definition has an error"""
+
+
+class ParseError(Exception):
+    """Parse error in a manifest file"""
 
 
 def _main_repository_path() -> Path:
@@ -356,7 +372,7 @@ def _main_repository_path() -> Path:
     The path returned here determines where this repository should be
     cloned locally
     """
-    return _risset_data_dir() / "risset-data"
+    return RISSET_ROOT / "risset-data"
 
 
 def user_plugins_path() -> Optional[Path]:
@@ -478,7 +494,7 @@ def _get_git_binary() -> str:
     return path
 
 
-def _git_clone(repo: str, destination: Path, depth=0) -> None:
+def _git_clone(repo: str, destination: Path, depth=1) -> None:
     """
     Clone the given repository to the destination.
 
@@ -505,7 +521,7 @@ def _git_clone(repo: str, destination: Path, depth=0) -> None:
     subprocess.call(args)
 
 
-def _git_update(repopath: Path) -> None:
+def _git_update(repopath: Path, depth=0) -> None:
     """
     Update the git repo at the given path
     """
@@ -515,10 +531,13 @@ def _git_update(repopath: Path) -> None:
     gitbin = _get_git_binary()
     cwd = os.path.abspath(os.path.curdir)
     os.chdir(str(repopath))
+    args = [gitbin, "pull"]
+    if depth > 0:
+        args.extend(['--depth', str(depth)])
     if SETTINGS['debug']:
-        subprocess.call([gitbin, "pull"])
+        subprocess.call(args)
     else:
-        subprocess.call([gitbin, "pull"], stdout=subprocess.PIPE)
+        subprocess.call(args, stdout=subprocess.PIPE)
     os.chdir(cwd)
 
 
@@ -573,25 +592,6 @@ def _find_system_plugins_path(possible_paths: List[Path]) -> Optional[Path]:
         _debug("Plugins found here: ", str(plugins))
     return None
 
-
-def _data_dir_for_platform() -> Path:
-    """
-    Returns the data directory for the given platform
-    """
-    platform = sys.platform
-    if platform == 'linux':
-        return Path(os.path.expanduser("~/.local/share"))
-    elif platform == 'darwin':
-        return Path(os.path.expanduser("~/Libary/Application Support"))
-    elif platform == 'win32':
-        p = R"C:\Users\$USERNAME\AppData\Local"
-        return Path(os.path.expandvars(p))
-    else:
-        raise PlatformNotSupportedError(f"Platform unknown: {platform}")
-
-
-def _risset_data_dir() -> Path:
-    return _data_dir_for_platform() / "risset"
 
 
 def _load_manifest(path: str) -> Union[dict, ErrorMsg]:
@@ -700,8 +700,33 @@ def _resolve_path(path: Union[str, Path], basedir: Union[str, Path, None]=None
         return p.resolve()
     if basedir is None:
         return (Path.cwd()/p).resolve()
-    print("basedir", basedir, "p", p)
     return (Path(basedir) / p).resolve()
+
+
+def _rm_dir(path: Path) -> None:
+    if not path.exists():
+        return
+    shutil.rmtree(path.as_posix())
+
+
+def _copy_recursive(src: Path, dest: Path) -> None:
+    if not dest.exists():
+        raise OSError(f"Destination path ({str(dest)}) does not exist")
+    if not dest.is_dir():
+        raise OSError(f"Destination path (str{dest}) should be a directory")
+
+    if src.is_dir():
+        _debug(f"Copying all files under {str(src)} to {str(dest)}")
+        for f in src.glob("*"):
+            _debug("    ", str(f))
+            if f.is_dir():
+                shutil.copytree(f.absolute().as_posix(), dest.as_posix())
+            else:
+                shutil.copy(f.as_posix(), dest.as_posix())
+    else:
+        _debug(f"Copying file {str(src)} to {str(dest)}")
+        shutil.copy(src.as_posix(), dest.as_posix())
+
 
 
 def _plugin_definition_from_file(filepath: Union[str, Path], url: str = '',
@@ -836,6 +861,10 @@ def system_installed_dlls() -> List[Path]:
     return list(path.glob("*" + ext))
 
 
+def _datarepo_localpath():
+    return RISSET_ROOT / 'risset-data'
+
+
 class MainIndex:
     def __init__(self, datarepo: Path = None, update=False):
         """
@@ -844,14 +873,15 @@ class MainIndex:
             update: if True, update index prior to parsing
         """
         if datarepo is None:
-            datarepo = _risset_data_dir() / 'risset-data'
+            datarepo = RISSET_ROOT / 'risset-data'
         else:
             assert isinstance(datarepo, Path)
         self.indexfile = datarepo / "rissetindex.json"
         if not datarepo.exists():
-            _git_clone(GIT_REPOSITORY, datarepo)
-        elif update:
-            _git_update(datarepo)
+            updateindex = False
+            _git_clone(INDEX_GIT_REPOSITORY, datarepo, depth=1)
+        else:
+            updateindex = update
         assert datarepo.exists()
         assert _is_git_repo(datarepo)
         assert self.indexfile.exists(), f"Main index file not found, searched: {self.indexfile}"
@@ -860,7 +890,7 @@ class MainIndex:
         self.version = ''
         self.pluginsources: Dict[str, PluginSource] = {}
         self.plugins: Dict[str, Plugin] = {}
-        self._parseindex(updateindex=update)
+        self._parseindex(updateindex=updateindex, updateplugins=update)
 
     def _parseindex(self, updateindex=False, updateplugins=False) -> None:
         self.plugins.clear()
@@ -914,6 +944,29 @@ class MainIndex:
     def update(self):
         self._parseindex(updateindex=True, updateplugins=True)
 
+    def build_documentation(self, dest: Path = None, buildhtml=True,  onlyinstalled=False) -> Path:
+        """
+        Build the documentation for the plugins indexed
+
+        Arguments:
+            dest: the destination folder. If not given, it is written to RISSET_ROOT/man (see below)
+            buildhtml: if True, build the html manual from the given markdown docs
+            onlyinstalled: if True, only the documentation for the plugins/opcodes actually installed
+                is generated
+
+        Returns:
+            the path where the documentation was placed
+
+        ===========   ===========================================
+        Platform      Default docs folder
+        ===========   ===========================================
+        linux         ~/.local/share/risset/man
+        macos         ~/Library/risset/man
+        windows       C:/Users/$USERNAME/AppData/Local/risset/man
+        ===========   ===========================================
+        """
+        return _generate_documentation(self, dest=dest, buildhtml=buildhtml, onlyinstalled=onlyinstalled)
+
     def _parse_plugin(self, pluginname) -> Optional[Plugin]:
         pluginsource = self.pluginsources.get(pluginname)
         if pluginsource is None:
@@ -957,7 +1010,7 @@ class MainIndex:
         """
         Returns the path to were installation manifests are saved in this system
         """
-        path = _risset_data_dir() / "installed-manifests"
+        path = RISSET_ROOT / "installed-manifests"
         if not path.exists():
             path.mkdir(parents=True)
         return path
@@ -996,23 +1049,39 @@ class MainIndex:
         dll, user_installed = self.installed_path_for_dll(plugin.binary_filename())
         return dll is not None and (not check or self._check_plugin_installed(plugin))
 
-    def find_manpage(self, opcode: str, plugin: Plugin = None, markdown=True) -> Optional[Path]:
+    def find_manpage(self,
+                     opcode: str,
+                     markdown=True) -> Optional[Path]:
         """
         Find the man page for the given opcode
 
         If markdown is True, search for the .md file, otherwise search the
-        html documentation (not implemented yet)
+        html documentation
+
+        Args:
+            opcode: the name of the opcode
+            markdown: if True, return the markdown file of the opcode, otherwise
+                returns the path to the .html file generated from it
         """
         if not markdown:
-            raise NotImplementedError("Only markdown is implemented at the moment")
-        if plugin is not None:
-            return plugin.manpage(opcode)
+            docfolder = Path(RISSET_GENERATED_DOCS)
+            if not docfolder.exists():
+                _errormsg("Documentation needs to be generated first (see `risset makedocs`)")
+                return None
+            htmlpage = docfolder / "site" / "opcodes" / (opcode + ".html")
+            if not htmlpage.exists():
+                _errormsg(f"No html page found. Path: {htmlpage}")
+                return None
+            return htmlpage
         else:
-            for plugin in self.plugins.values():
-                if opcode in plugin.opcodes:
-                    manpage = plugin.manpage(opcode)
-                    return manpage
-            _debug(f"Opcode {opcode} not found in any plugin")
+            opcodedef: Opcode = self.opcodes.get(opcode)
+            if not opcodedef:
+                raise ValueError(f"Opcode {opcode} not found")
+            plugin = self.plugins.get(opcodedef.plugin)
+            if not plugin:
+                raise RuntimeError(f"The opcode {opcode} is defined in plugin {opcodedef.plugin}"
+                                   f", but the plugin was not found")
+            return plugin.manpage(opcode)
 
     def installed_plugin_info(self, plugin: Plugin) -> Optional[InstalledPluginInfo]:
         """
@@ -1125,7 +1194,19 @@ class MainIndex:
             return None
         return info.versionstr
 
-    def defined_opcodes(self, installed=False, pattern:str=None) -> List[Opcode]:
+    @property
+    def opcodes(self) -> Dict[str, Opcode]:
+        opcodes = self.defined_opcodes()
+        return {opcode.name: opcode
+                for opcode in opcodes}
+
+    def defined_opcodes(self, installed=False) -> List[Opcode]:
+        """
+        Returns a list of opcodes
+
+        Args:
+            installed: only opcodes which are installed are returned
+        """
         opcodes = []
         for plugin in self.plugins.values():
             if installed and not self.is_plugin_installed(plugin):
@@ -1211,9 +1292,39 @@ class MainIndex:
         # no errors
         return None
 
-    def list_plugins(self, installed=False, nameonly=False, allplatforms=False,
-                     leftcolwidth=20):
+    def _list_plugins_as_dict(self, installed=False, allplatforms=False) -> dict:
+        d = {}
         platform = _get_platform()
+        for plugin in self.plugins.values():
+            if platform not in plugin.binaries.keys():
+                if not allplatforms:
+                    _debug(f"Plugin {plugin.name} has no binary for platform {platform}")
+                    _debug("    To include it in the list, use allplatforms")
+                    continue
+            info = self.installed_plugin_info(plugin)
+            plugininstalled = info is not None
+            if installed and not plugininstalled:
+                continue
+            plugdict = {}
+            plugdict['version'] = plugin.version
+            if info:
+                plugdict['installed'] = True
+                plugdict['installed-version'] = info.versionstr
+                plugdict['path'] = info.dllpath.as_posix()
+            else:
+                plugdict['installed'] = False
+            plugdict['opcodes'] = plugin.opcodes
+            plugdict['url'] = plugin.url
+            plugdict['short_description'] = plugin.short_description
+            plugdict['long_description'] = plugin.long_description
+            plugdict['author'] = plugin.author
+            d[plugin.name] = plugdict
+        return d
+
+    def list_plugins(self, installed=False, nameonly=False, allplatforms=False,
+                     leftcolwidth=20, oneline=False):
+        platform = _get_platform()
+        descr_max_width = 60
         for plugin in self.plugins.values():
             data = []
             if platform not in plugin.binaries.keys():
@@ -1232,17 +1343,24 @@ class MainIndex:
             extra_lines = []
             if info:
                 if info.versionstr == UNKNOWN_VERSION:
-                    data.append("installed (not by risset)")
+                    data.append("installed (manually)")
                 else:
-                    data.append(f"installed: {info.versionstr}")
-                if not info.installed_in_system_folder:
+                    if oneline:
+                        data.append(info.versionstr)
+                    else:
+                        data.append(f"installed: {info.versionstr}")
+                if not info.installed_in_system_folder and not oneline:
                     extra_lines.append(f"Path: {info.dllpath}")
             if data:
                 status = "[" + ", ".join(data) + "]"
             else:
                 status = ""
             leftcol = f"{plugin.name}  @ {plugin.version}"
-            print(f"* {leftcol.ljust(leftcolwidth)} | {plugin.short_description}  {status}")
+            descr = plugin.short_description
+            if oneline and len(descr) > descr_max_width:
+                descr = descr[:descr_max_width] + "…"
+            symbol = "*" if plugininstalled else "-"
+            print(f"{symbol} {leftcol.ljust(leftcolwidth)} | {descr} {status}")
             if extra_lines:
                 for line in extra_lines:
                     print(" " * leftcolwidth + f"   |   ", line)
@@ -1314,6 +1432,177 @@ class MainIndex:
             os.remove(manifestpath.as_posix())
 
 
+###############################################################
+#                        Documentation                        #
+###############################################################
+
+
+def _call_mkdocs(folder: Path, *args: str):
+    currentdir = os.getcwd()
+    os.chdir(folder)
+    subprocess.call(["python", "-m", "mkdocs"] + list(args))
+    os.chdir(currentdir)
+
+
+def _is_mkdocs_installed() -> bool:
+    if sys.platform == "linux" or sys.platform == "darwin":
+        return shutil.which("mkdocs") is not None
+    else:
+        try:
+            import mkdocs
+            return True
+        except ImportError as e:
+            return False
+
+
+def _generate_documentation(index: MainIndex, dest: Path = None, 
+                            buildhtml=True, onlyinstalled=False
+                            ) -> Path:
+    if dest is None:
+        # ~/.local/share/risset/man
+        dest = RISSET_GENERATED_DOCS
+    _compile_docs(index=index, dest=dest / "docs", makeindex=True,
+                  onlyinstalled=onlyinstalled)
+    mkdocsconfig = RISSET_DATAREPO_LOCALPATH / "assets" / "mkdocs.yml"
+    if mkdocsconfig.exists():
+        shutil.copy(mkdocsconfig, dest)
+        if buildhtml:
+            if _is_mkdocs_installed():
+                _call_mkdocs(dest, "build")
+            else:
+                _info("mkdocs is needed to build the html documentation")
+    return dest
+
+
+def _compile_docs(index: MainIndex, dest: Path, makeindex=True,
+                  onlyinstalled=False) -> None:
+    """
+    Gathers all manpages and generates a mkdocs compatible docs folder
+    """
+    dest = dest.expanduser().absolute()
+    if dest.exists():
+        _debug(f"Removing existing doc folder: {str(dest)}")
+        shutil.rmtree(dest.as_posix())
+    css_folder = dest / "css"
+    opcodes_folder = dest / "opcodes"
+    opcodes_assets_folder = opcodes_folder / "assets"
+
+    for folder in [dest, css_folder, opcodes_folder, opcodes_assets_folder]:
+        folder.mkdir(exist_ok=True, parents=True)
+
+    # copy .css file
+    syntaxhighlightingcss = RISSET_DATAREPO_LOCALPATH / "assets" / "syntax-highlighting.css"
+    assert syntaxhighlightingcss.exists()
+    shutil.copy(syntaxhighlightingcss, css_folder)
+
+    for plugin in index.plugins.values():
+        if onlyinstalled and not index.is_plugin_installed(plugin):
+            continue
+        doc_folder = plugin.resolve_doc_folder()
+        if doc_folder is None:
+            _debug(f"No docs found for plugin: {plugin.name}")
+            continue
+
+        docs = doc_folder.glob("*.md")
+        _debug(f"Copying docs to {opcodes_folder}")
+        for doc in docs:
+            _debug(" copying", str(doc))
+            shutil.copy(doc.as_posix(), opcodes_folder.as_posix())
+
+        # copy assets
+        source_assets_folder = doc_folder / "assets"
+        if source_assets_folder.exists() and source_assets_folder.is_dir():
+            _debug(f"Copying assets for plugin {plugin.name}")
+            _copy_recursive(source_assets_folder, opcodes_assets_folder)
+        else:
+            _debug(f"No assets to copy for plugin {plugin.name}")
+
+    if makeindex:
+        _docs_generate_index(index, dest / "index.md")
+
+
+def _manpage_get_abstract(manpage: Path, opcode: str) -> str:
+    """
+    Args:
+        manpage: the path to the manpage for the given opcode
+            (a markdown file)
+        opcode: the name of the opcode
+
+    Returns:
+        the abstract. Can be an empty string if the opcode has no abstract
+
+    Raises:
+        ParseError if the manpage can't be parsed
+    """
+    text = open(manpage).read()
+    if "# Abstract" in text:
+        # the abstract would be all the text between # Abstract and the next #tag
+        it = iter(text.splitlines())
+        for line in it:
+            if not "# Abstract" in line:
+                continue
+            for line in it:
+                line = line.strip()
+                if not line:
+                    continue
+                return line if not line.startswith("#") else ""
+        _debug(f"No abstract in manpage file {manpage}")
+        return ""
+    # no Abstract tag, so abstract is the text between the title and the text tag
+    _debug(f"get_abstract: manpage for opcode {opcode} has no # Abstract tag")
+    it = iter(text.splitlines())
+    for line in it:
+        line = line.strip()
+        if not line:
+            continue
+        if not line.startswith("#"):
+            raise ParseError(f"Expected title, got {line}")
+        parts = line.split()
+        if len(parts) != 2:
+            raise ParseError("Could not parse title, expected line of the form '# opcode'")
+        if parts[1].lower() != opcode.lower():
+            raise ParseError(f"Expected title ({parts[1]} to be the same as opcode name ({opcode})")
+        for line in it:
+            line = line.strip()
+            if line:
+                return line if not line.startswith("#") else ""
+        _debug(f"No abstract in manpage file {manpage}")
+        return ""
+
+
+def _docs_generate_index(index: MainIndex,
+                         outfile: Path = None) -> None:
+    """
+    Generate an index for the documentation
+
+    Arguments:
+        index: the main index
+        outfile: the path to write the index to (normally an index.md file)
+    """
+    lines = []
+    _ = lines.append
+    _("# Plugins\n")
+    plugins = sorted(index.plugins.values(), key=lambda plugin: plugin.name)
+    for plugin in plugins:
+        _(f"## {plugin.name}\n")
+        _(plugin.short_description + '\n')
+        opcodes = sorted(plugin.opcodes)
+        for opcode in opcodes:
+            manpage = plugin.manpage(opcode)
+            if not manpage:
+                _debug(f"opcode {opcode} has no manpage")
+                continue
+            try:
+                abstract = _manpage_get_abstract(manpage, opcode)
+            except ParseError as err:
+                _errormsg(f"Could not get abstract for opcode {opcode}: {err}")
+                continue
+            _(f"  * [{opcode}](opcodes/{opcode}.md): {abstract}")
+
+        _("")
+    with open(outfile, "w") as f:
+        f.write("\n".join(lines))
+
 
 ###############################################################
 #                        Subcommands                          #
@@ -1325,8 +1614,16 @@ def cmd_list(mainindex: MainIndex, args) -> None:
     Lists all plugins available for download
     """
     # TODO: implement flags: --json, --output
-    mainindex.list_plugins(installed=args.installed, nameonly=args.nameonly,
-                           allplatforms=args.all)
+    if args.json:
+        d = mainindex._list_plugins_as_dict(installed=args.installed, allplatforms=args.all)
+        if args.outfile:
+            with open(args.outfile, "w") as f:
+                json.dump(d, f, indent=2)
+        else:
+            print(json.dumps(d, indent=2))
+    else:
+        mainindex.list_plugins(installed=args.installed, nameonly=args.nameonly,
+                               allplatforms=args.all, oneline=args.oneline)
 
 
 def cmd_show(index: MainIndex, args) -> bool:
@@ -1337,6 +1634,9 @@ def cmd_show(index: MainIndex, args) -> bool:
 
 
 def cmd_rm(index: MainIndex, args) -> bool:
+    """
+    Remove a plugin
+    """
     errors = []
     platform = _get_platform()
     noerrors = True
@@ -1392,10 +1692,10 @@ def cmd_install(index: MainIndex, args) -> bool:
             if _version_tuplet(plugin.version) <= _version_tuplet(current_version):
                 _debug(f"Plugin {plugin.name}, version: {plugin.version}")
                 _debug(f"    Installed version: {current_version}")
-                _info(f"Installed version of plugin {plugin} is up-to-date")
+                _info(f"Installed version of plugin {plugin.name} is up-to-date")
                 errors_found = True
                 continue
-            _info(f"Updating plugin {plugin}: "
+            _info(f"Updating plugin {plugin.name}: "
                  f"{current_version} -> {plugin.version}")
         error = index.install_plugin(plugin)
         if error:
@@ -1428,8 +1728,7 @@ def cmd_man(idx: MainIndex, args) -> bool:
     Flags:
         --html      - Use .html file instead of .md version
         --path      - Do not open manpage, only print the path
-        --external  - Open file in external app. This is only used
-                      when opening the markdown page. Without this
+        --external  - Open file in external app. This is only used when opening the markdown page. Without this
                       the markdown is output to the terminal
         opcode      - opcode(s) to get manpage of. Can be a wildcard
     """
@@ -1443,35 +1742,43 @@ def cmd_man(idx: MainIndex, args) -> bool:
         if matched:
             opcodes.extend(matched)
     if not opcodes:
-        _debug("man: no opcodes found")
-        return False
-    for opcode in opcodes:
-        _debug("man: processing opcode ", opcode.name)
-        plugin = idx.plugins[opcode.plugin]
-        path = idx.find_manpage(opcode=opcode.name, plugin=plugin,
-                                markdown=fmt=="markdown")
-        if not path:
-            _errormsg(f"No manpage for opcode {opcode.name}")
-            continue
-        if args.path:
-            # just print the path
-            print(f"{opcode.name}:{str(path)}")
-        elif args.simplepath:
-            print(str(path))
-        elif fmt == "markdown":
-            if args.external:
-                _open_in_default_application(path.as_posix())
+        # open the index
+        htmlidx = RISSET_GENERATED_DOCS / "site" / "index.html"
+        if not htmlidx.exists():
+            _errormsg(f"Index file for the documentation not found (path: {htmlidx.as_posix()}")
+            return False
+        _open_in_default_application(htmlidx.as_posix())
+    else:
+        for opcode in opcodes:
+            _debug("man: processing opcode ", opcode.name)
+            path = idx.find_manpage(opcode=opcode.name, markdown=fmt=="markdown")
+            if not path:
+                _errormsg(f"No manpage for opcode {opcode.name}")
+                continue
+            if args.path:
+                # just print the path
+                print(f"{opcode.name}:{str(path)}")
+            elif args.simplepath:
+                print(str(path))
+            elif fmt == "markdown":
+                if args.external:
+                    _open_in_default_application(path.as_posix())
+                else:
+                    _show_markdown_file(path)
             else:
-                _show_markdown_file(path)
-        else:
-            # open it in the default application
-            _open_in_default_application(str(path))
+                # open it in the default application
+                _open_in_default_application(str(path))
     return True
 
 
 def cmd_update(idx: MainIndex, args) -> bool:
     idx.update()
     return True
+
+
+def cmd_resetcache(args) -> None:
+    _rm_dir(RISSET_DATAREPO_LOCALPATH)
+    _rm_dir(RISSET_CLONES_PATH)
 
 
 def update_self():
@@ -1481,12 +1788,31 @@ def update_self():
     subprocess.check_call([python, "-m", "pip", "install", "risset", "--upgrade"])
 
 
-def cmd_listopcodes(plugins_index: MainIndex, args) -> bool:
+def cmd_list_installed_opcodes(plugins_index: MainIndex, args) -> bool:
+    """
+    Print a list of installed opcodes
+    """
     opcodes = plugins_index.defined_opcodes(installed=True)
     opcodes.sort(key=lambda opcode: opcode.name.lower())
     for opcode in opcodes:
         print(opcode.name)
     return True
+
+
+def cmd_makedocs(idx: MainIndex, args) -> bool:
+    """
+    Generate the documentation for all opcodes
+
+    Options:
+        --onlyinstalled: if True, only generate documentation for installed opcodes
+        --outfolder: if given the documentation is placed in this folder. Otherwise it is
+            placed in RISSET_GENERATED_DOCS
+    """
+    outfolder = args.outfolder or RISSET_GENERATED_DOCS
+    _generate_documentation(idx, dest=Path(outfolder), buildhtml=True, onlyinstalled=args.onlyinstalled)
+    _info(f"Documentation generated in {outfolder}")
+    return True
+
 
 def _running_from_terminal():
     return sys.stdin.isatty()
@@ -1495,6 +1821,7 @@ def _running_from_terminal():
 def _print_file(path: Path) -> None:
     text = open(str(path)).read()
     print(text)
+
 
 def _has(cmd: str) -> bool:
     """ Returns True if cmd is in the path """
@@ -1559,12 +1886,13 @@ def main():
 
     # List command
     list_group = subparsers.add_parser('list', help="List packages")
-    add_flag(list_group, "--json", help="Outputs list as json (not implemented yet)")
+    add_flag(list_group, "--json", help="Outputs list as json")
     add_flag(list_group, "--all", "List all plugins, even those without a binary for the current platform")
     add_flag(list_group, "--nameonly", help="Output just the name of each plugin")
     add_flag(list_group, "--installed", help="List only installed plugins")
     add_flag(list_group, "--notinstalled", help="List only plugins which are not installed")
-    list_group.add_argument("-o", "--outfile", help="Outputs to a file (not implemented yet)")
+    list_group.add_argument("-o", "--outfile", help="Outputs to a file")
+    list_group.add_argument("-1", "--oneline", action="store_true", help="List each plugin in one line")
     list_group.set_defaults(func=cmd_list)
 
     # Install command
@@ -1585,6 +1913,14 @@ def main():
     show_group.add_argument("plugin", help="Plugin to gather information about")
     show_group.set_defaults(func=cmd_show)
 
+    # build docs
+    makedocs_group = subparsers.add_parser("makedocs", help="Build the documentation for all defined plugins. "
+                                                            "This depends on mkdocs being installed")
+    makedocs_group.add_argument("--onlyinstalled", action="store_true", help="Build docs only for installed plugins")
+    makedocs_group.add_argument("-o", "--outfolder", help="Destination folder to place the documentation",
+                                default='')
+    makedocs_group.set_defaults(func=cmd_makedocs)
+
     # man command
     man_group = subparsers.add_parser("man", help="Open manual page for an installed opcode. "
                                                   "Multiple opcodes or a glob wildcard are allowed")
@@ -1599,7 +1935,7 @@ def main():
                                 " used when opening the markdown man page.")
     man_group.add_argument("--html", action="store_true",
                            help="Use the .html page (opens it in the default browser")
-    man_group.add_argument("opcode", nargs="+", help="Show the manual page of this opcode/opcodes")
+    man_group.add_argument("opcode", nargs="*", help="Show the manual page of this opcode/opcodes")
     man_group.set_defaults(func=cmd_man)
 
     # update command
@@ -1607,15 +1943,18 @@ def main():
     update_group.set_defaults(func=cmd_update)
 
     # list-opcodes
-    listopcodes = subparsers.add_parser("list-opcodes", help="List installed opcodes")
-    listopcodes.set_defaults(func=cmd_listopcodes)
+    listopcodes = subparsers.add_parser("listopcodes", help="List installed opcodes")
+    listopcodes.set_defaults(func=cmd_list_installed_opcodes)
+    
+    # reset
+    resetgroup = subparsers.add_parser("resetcache", help="Remove local clones of plugin's repositories")
 
     args = parser.parse_args()
     if args.debug:
         SETTINGS['debug'] = True
 
     if args.version:
-        print(VERSION)
+        print(__version__)
         sys.exit(0)
 
     if not args.command:
@@ -1623,19 +1962,20 @@ def main():
         sys.exit(-1)
 
     try:
-        mainindex = MainIndex(update=args.update)
+        mainindex = MainIndex(update=args.update or args.command == 'update')
     except Exception as e:
         _errormsg(str(e))
         sys.exit(-1)
 
     if args.command == 'update':
-        mainindex.update()
         sys.exit(0)
-
-    ok = args.func(mainindex, args)
-    if not ok:
-        sys.exit(-1)
-
+    elif args.command == 'resetcache':
+        cmd_resetcache(args)
+        sys.exit(0)
+    else:
+        ok = args.func(mainindex, args)
+        sys.exit(0 if ok else -1)
+    
 
 if __name__ == "__main__":
     main()
