@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+__version__ = "1.0.0"
+
 import sys
 
 if (sys.version_info.major, sys.version_info.minor) < (3, 8):
@@ -25,7 +27,6 @@ if TYPE_CHECKING:
     from typing import List, Dict, Tuple, Union, Optional
 
 
-__version__ = "0.3.4"
 
 INDEX_GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
