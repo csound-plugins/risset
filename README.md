@@ -123,7 +123,7 @@ The same, but get the path to the markdown man page
 
 # Plugin Documentation
 
-Documentation for all plugins can be found here: https://github.com/csound-plugins/risset-data/tree/master/docs
+Documentation for all plugins can be found here: https://csound-plugins.github.io/risset-docs/
 
 -------
 
