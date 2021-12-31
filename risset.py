@@ -3,6 +3,7 @@ from __future__ import annotations
 
 __version__ = "1.0.0"
 
+import glob
 import sys
 
 if (sys.version_info.major, sys.version_info.minor) < (3, 8):
@@ -21,6 +22,8 @@ import fnmatch
 from urllib.parse import urlparse
 import urllib.request
 from pathlib import Path
+from zipfile import ZipFile
+import inspect as _inspect
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -30,25 +33,42 @@ if TYPE_CHECKING:
 
 INDEX_GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
-SETTINGS = {
-    'debug': False,
-}
 
-# once we require python >= 3.9 we can use functools.cache
-_cache = {
-}
-
-
-def _get_platform() -> str:
-    """Returns one of "linux", "macos", "windows" """
-    # TODO: add support for arm linux (raspi, etc.)
-    if (out := _cache.get('platform')) is None:
-        _cache['platform'] = out = {
+class _Register:
+    def __init__(self):
+        self.downloaded_files: Dict[str, Path] = {}
+        self.cloned_repos: Dict[str, Path]  = {}
+        self.platform: str = {
             'linux': 'linux',
             'darwin': 'macos',
             'win32': 'windows'
         }[sys.platform]
-    return out
+        self.system_plugins_path: Optional[Path] = None
+        self.debug = False
+        self.cache = {}
+
+
+register = _Register()
+
+
+def _get_platform() -> str:
+    """
+    Returns one of "linux", "macos", "windows"
+
+    * all 'linux', 'macos' and 'windows' refer to x86-64
+    """
+    # TODO: add support for arm linux (raspi, etc.)
+    return register.platform
+
+
+def _abbrev(s: str, maxlen: int) -> str:
+    """Abbreviate string"""
+    assert maxlen > 18
+    l = len(s)
+    if l < maxlen:
+        return s
+    rightlen = min(8, l // 5)
+    return f"{s[:l - rightlen - 1]}…{s[-rightlen:]}"
 
 
 def _data_dir_for_platform() -> Path:
@@ -71,6 +91,7 @@ RISSET_ROOT = _data_dir_for_platform() / "risset"
 RISSET_DATAREPO_LOCALPATH = RISSET_ROOT / "risset-data"
 RISSET_GENERATED_DOCS = RISSET_ROOT / "man"
 RISSET_CLONES_PATH = RISSET_ROOT / "clones"
+RISSET_ASSETS_PATH = RISSET_ROOT / "assets"
 
 
 def _is_git_repo(path: Union[str, Path]) -> bool:
@@ -110,8 +131,9 @@ def _is_git_url(url: str) -> bool:
 
 def _debug(*msgs) -> None:
     """ Print debug info only if debugging is turned on """
-    if SETTINGS['debug']:
-        print("DEBUG: ", *msgs, file=sys.stderr)
+    if register.debug:
+        caller = _inspect.stack()[1][3]
+        print(f"DEBUG::{caller[:24]}".ljust(32), ":", *msgs, file=sys.stderr)
 
 
 def _errormsg(msg: str) -> None:
@@ -124,15 +146,14 @@ def _info(*msgs: str) -> None:
     print(*msgs)
 
 
-def _banner(lines: List[str]):
+def _banner(lines: List[str], margin=2):
     """ Print a banner message """
-    margin = 2
     marginstr = " " * margin
     sep = "*" * (margin*2 + max(len(line) for line in lines))
     print("", sep, sep, "", sep="\n", end="")
     for line in lines:
-        print(marginstr, line)
-    print("", sep, sep, "", sep="\n")
+        print(marginstr, line, sep="")
+    print(sep, sep, "", sep="\n")
 
 
 class ErrorMsg(str):
@@ -140,22 +161,95 @@ class ErrorMsg(str):
 
 
 @dataclass
+class Asset:
+    """
+    An Asset describes any file/files distributed alongside a plugin
+
+    The use case is for data files which are needed by a plugin at runtime
+
+    Attribs:
+        url: the url where to download the assets from. It can be a git repository
+            or the direct url to a downloadable file/zip file
+        paths: the paths to extract from the url (if needed). Each item can be either
+            a path relative to the root of the git or zip file, or a glob pattern. In the
+            case where the url points to a concrete file (not a zip or a git repo), this
+            attributes should be empty
+        platform: if given, the platform for which this assets are valid (in the case
+            of binaries of some kind)
+    """
+    url: str
+    """the url where to download the assets from"""
+
+    patterns: List[str] = None
+    """the paths to extract from the url (if needed). It can be a glob pattern"""
+
+    platform: str = 'all'
+    """the platform for which this assets are valid"""
+
+    name: str = ''
+
+    def identifier(self) -> str:
+        if self.name:
+            return self.name
+        if self.patterns:
+            return f"{self.url}::{','.join(str(patt) for patt in self.patterns)}"
+        return self.url
+
+    def local_path(self) -> Path:
+        assert self.url
+        if _is_git_url(self.url):
+            return _git_local_path(self.url)
+        return _download_file(self.url)
+
+    def retrieve(self) -> List[Path]:
+        """
+        Download and resolve all files
+
+        Returns:
+            a (possibly empty) list of local paths which belong to this asset.
+            In the case of an asset referring to a file within a zip, the
+            files are extracted to a temp dir and a path to that temp dir
+            is returned
+        """
+        assert self.url and _is_url(self.url)
+        # self.url is either a git repo or a url pointing to a file
+        root = self.local_path()
+        if root.is_dir():
+            assert _is_git_repo(root)
+            _git_update(root)
+            collected_assets: List[Path] = []
+            for pattern in self.patterns:
+                matchedfiles = glob.glob((root/pattern).as_posix())
+                collected_assets.extend(Path(m) for m in matchedfiles)
+            return collected_assets
+        elif root.suffix == '.zip':
+            _debug(f"Extracting {self.patterns} from {root}")
+            outfiles = _zip_extract(root, self.patterns)
+            _debug(f"Extracted {outfiles} from {root}")
+            return outfiles
+        else:
+            # root is a file
+            return [root]
+
+
+
+@dataclass
 class Binary:
     """
     A Binary describes a plugin binary
 
-    Attributes:
+    Attribs:
         platform: the platform/architecture for which this binary is built. Possible platforms:
             'linux' (x86_64), 'windows' (windows 64 bits), 'macos' (x86_64)
-        url: either a http link to a binary/.zip file, or a relative path to a binary/.zip file
-            In the case of a relative path, the path is relative to the manifest definition
+        url: either a http link to a binary/.zip file, or empty if the plugin's location is relative to the
+            manifest definition
         build_platform: the platform this binary was built with
         extractpath: in the case of using a .zip file as url, the extract path should indicate
             a relative path to the binary within the .zip file structure
     """
     platform: str
     url: str
-    build_platform: str
+    build_platform: str = ''
     extractpath: str = ''
 
     def binary_filename(self) -> str:
@@ -170,44 +264,37 @@ class Binary:
 
 
 @dataclass
-class PluginSource:
+class IndexItem:
     """
-    An plugin entry in the risset index
+    An  entry in the risset index
 
-    Attributes:
-        name: the name of the plugin
+    Attribs:
+        name: the name of the entity
         url: the url of the git repository
         path: the relative path within the repository to the risset.json file.
     """
     name: str
     url: str
     path: str = ''
-    localpath: Path = None
-
-    def __post_init__(self):
-        if self.localpath is None:
-            reponame = _git_reponame(self.url)
-            self.localpath = RISSET_CLONES_PATH / reponame
 
     def manifest_path(self) -> Path:
-        if not self.localpath.exists():
-            _git_clone(self.url, self.localpath, depth=1)
-        manifest_path = self.localpath / self.path
+        localpath = _git_local_path(self.url)
+        assert localpath.exists()
+        manifest_path = localpath / self.path
         if manifest_path.is_file():
             assert manifest_path.suffix == ".json"
         else:
             manifest_path = manifest_path / "risset.json"
         if not manifest_path.exists():
-            raise RuntimeError(f"For plugin {self.name} ({self.url}, cloned at {self.localpath}"
+            raise RuntimeError(f"For plugin {self.name} ({self.url}, cloned at {localpath}"
                                f" the manifest was not found at the expected path: {manifest_path}")
         return manifest_path
 
     def update(self) -> None:
-        path = self.localpath
-        assert path.exists() and _is_git_repo(path)
+        path = _git_local_path(self.url)
         _git_update(path)
 
-    def read_definition(self: PluginSource) -> Plugin:
+    def read_definition(self: IndexItem) -> Plugin:
         """
         Read the plugin definition pointed by this plugin source
 
@@ -220,14 +307,14 @@ class PluginSource:
         assert manifest.exists() and manifest.suffix == '.json'
         plugin = _plugin_definition_from_file(manifest.as_posix(), url=self.url,
                                               manifest_relative_path=self.path)
-        plugin.cloned_path = self.localpath
+        plugin.cloned_path = _git_local_path(self.url)
         return plugin
 
 
 @dataclass
 class Plugin:
     """
-    Attributes:
+    Attribs:
         name: name of the plugin
         version: a version for this plugin, for update reasons
         short_description: a short description of the plugin or its opcodes
@@ -238,6 +325,7 @@ class Plugin:
             Possible platforms are: 'linux', 'windows', 'macos', where in each case x86_64 is implied. Other
                 platforms, when supported, will be of the form 'linux-arm64' or 'macos-arm64'
         opcodes: a list of opcodes defined in this plugin
+        assets: a list of Assets
         author: the author of this plugin
         email: the email of the author
         cloned_path: path to the cloned repository
@@ -249,6 +337,15 @@ class Plugin:
         manifest_relative_path: the subdirectory within the repository where the "risset.json" file is
             placed. If not given, it is assumed that the manifest is placed at the root of the repository
             structure
+
+    {
+        "assets": [
+            { "url": "...",
+              "extractpath": "...",
+              "platform": "linux"
+            }
+        ]
+    }
     """
     name: str
     url: str
@@ -259,18 +356,16 @@ class Plugin:
     opcodes: List[str]
     author: str
     email: str
+    cloned_path: Path
     manifest_relative_path: str = ''
     long_description: str = ''
     doc_folder: str = 'doc'
-    cloned_path: Path = None
+    assets: Optional[List[Asset]] = None
 
     def __post_init__(self):
         # manifest_relative_path should be either empty or a subdir of the repository's root. It should
         # not point directly to the manifest, since this is hard-coded as risset.json
         assert not self.manifest_relative_path or not os.path.splitext(self.manifest_relative_path)
-
-        if self.cloned_path is None:
-            self.cloned_path = RISSET_CLONES_PATH / self.name
 
     def __hash__(self):
         return hash((self.name, self.version))
@@ -291,8 +386,7 @@ class Plugin:
         """
         The local path to the manifest file of this plugin
         """
-        root = Path(self.cloned_path)
-        return root / self.manifest_relative_path / "risset.json"
+        return self.cloned_path / self.manifest_relative_path / "risset.json"
 
     def asdict(self) -> dict:
         d = _asdict(self)
@@ -320,7 +414,6 @@ class Plugin:
             raise OSError(f"No doc folder found (declared as {doc_folder}")
         return doc_folder
 
-
 @dataclass
 class Opcode:
     name: str
@@ -333,7 +426,7 @@ class InstalledPluginInfo:
     """
     Information about an installed plugin
 
-    Attributes:
+    Atribs:
         name: (str) name of the plugin
         dllpath: (Path) path of the plugin binary (a .so, .dll or .dylib file)
         installed_in_system_folder: (bool) is this installed in the systems folder?
@@ -354,8 +447,8 @@ class PlatformNotSupportedError(Exception):
     """Raised when the current platform is not supported"""
 
 
-class PluginDefinitionError(Exception):
-    """The plugin definition has an error"""
+class SchemaError(Exception):
+    """An entity (a dict, a json file) does not fulfill the needed schema"""
 
 
 class ParseError(Exception):
@@ -412,25 +505,88 @@ def _csound_version() -> Tuple[int, int]:
     raise ValueError("Could not find a version number in the output")
 
 
-def _extract_from_zip(zipfile: str, extractpath: str, outfolder: str = None) -> str:
+def _is_glob(s: str) -> bool:
+    return "*" in s or "?" in s
+
+
+def _zip_extract_folder(zipfile: Path, folder: str, cleanup=True, destroot: Path = None) -> Path:
+    foldername = os.path.split(folder)[1]
+    root = Path(tempfile.mktemp())
+    root.mkdir(parents=True, exist_ok=True)
+    z = ZipFile(zipfile, 'r')
+    pattern = folder + '/*'
+    extracted = [z.extract(name, root) for name in z.namelist()
+                if fnmatch.fnmatch(name, pattern)]
+    _debug(f"_zip_extract_folder: Extracted files from folder {folder}: {extracted}")
+    if destroot is None:
+        destroot = Path(tempfile.gettempdir())
+    destfolder = destroot / foldername
+    if destfolder.exists():
+        _debug(f"_zip_extract_folder: Destination folder {destfolder} already exists, removing")
+        _rm_dir(destfolder)
+    shutil.move(root / folder, destroot)
+    assert destfolder.exists() and destfolder.is_dir()
+    if cleanup:
+        _rm_dir(root)
+    return destfolder
+
+
+def _zip_extract(zipfile: Path, patterns: List[str]) -> List[Path]:
+    """
+    Extract multiple files from zip
+
+    Args:
+        zipfile: the zip file to extract from
+        patterns: a list of filenames or glob patterns
+
+    Returns:
+        a list of output files extracted. If glob patterns were used there might be
+        more output files than number of patterns. Otherwise there is a 1 to 1
+        relationship between input and output
+    """
+    outfolder = Path(tempfile.gettempdir())
+    z = ZipFile(zipfile, 'r')
+    out: List[Path] = []
+    zipped = z.namelist()
+    _debug(f"Inspecting zipfile {zipfile}, contents: {zipped}")
+    for pattern in patterns:
+        if _is_glob(pattern):
+            _debug(f"Matching names against pattern {pattern}")
+            for name in zipped:
+                if name.endswith("/") and fnmatch.fnmatch(name[:-1], pattern):
+                    # a folder
+                    out.append(_zip_extract_folder(zipfile, name[:-1]))
+                elif fnmatch.fnmatch(name, pattern):
+                    _debug(f"   Name {name} matches!")
+                    out.append(Path(z.extract(name, path=outfolder.as_posix())))
+                else:
+                    _debug(f"   Name  {name} does not match")
+        else:
+            out.append(Path(z.extract(pattern, path=outfolder)))
+    return out
+
+
+def _zip_extract_file(zipfile: Path, extractpath: str) -> str:
     """
     Extracts a file from a zipfile, returns the path to the extracted file
 
     Args:
         zipfile: the path to a local .zip file
         extractpath: the path to extract inside the .zip file
+        outfolder: where to expand the zip file
 
     Returns:
         the path of the extracted file.
 
     Raises KeyError if `relpath` is not in `zipfile`
     """
-    from zipfile import ZipFile
-    if not outfolder:
-        outfolder = tempfile.gettempdir()
-    with ZipFile(zipfile, 'r') as zipobj:
-        outfile = zipobj.extract(extractpath, path=outfolder)
-        return outfile
+    return _zip_extract(zipfile, [extractpath])[0]
+
+
+def _zip_list(zipfile: Path) -> List[str]:
+    """ List the contents of a zip file """
+    with ZipFile(zipfile, 'r') as z:
+        return z.namelist()
 
 
 def _csound_opcodes() -> List[str]:
@@ -495,7 +651,32 @@ def _get_git_binary() -> str:
     return path
 
 
-def _git_clone(repo: str, destination: Path, depth=1) -> None:
+def _git_local_path(repo: str, update=False) -> Path:
+    """
+    Query the local path of the given repository, clone if needed
+
+    Args:
+        repo: the url of the git repository
+        update: if not cloned, update the repo
+    """
+    if repo in register.cloned_repos:
+        return register.cloned_repos[repo]
+    assert repo and _is_git_url(repo), f"Invalid repository name: {repo}"
+    _debug(f"Querying local path for repo {repo}")
+    reponame = _git_reponame(repo)
+    destination = RISSET_CLONES_PATH / reponame
+    if destination.exists():
+        assert _is_git_repo(destination), f"Expected {destination} to be a git repository"
+        register.cloned_repos[repo] = destination
+        if update:
+            _git_update(destination)
+    else:
+        _git_clone_into(repo, destination=destination, depth=1)
+        register.cloned_repos[repo] = destination
+    return destination
+
+
+def _git_clone_into(repo: str, destination: Path, depth=1) -> None:
     """
     Clone the given repository to the destination.
 
@@ -535,7 +716,7 @@ def _git_update(repopath: Path, depth=0) -> None:
     args = [gitbin, "pull"]
     if depth > 0:
         args.extend(['--depth', str(depth)])
-    if SETTINGS['debug']:
+    if register.debug:
         subprocess.call(args)
     else:
         subprocess.call(args, stdout=subprocess.PIPE)
@@ -639,55 +820,75 @@ def _normalize_version(version: str, default="0.0.0") -> str:
     return ".".join(str(i) for i in versiontup)
 
 
-def _parse_binary(platform: str, binarydef: dict) -> Union[Binary, ErrorMsg]:
+def _parse_binary(platform: str, binarydef: dict) -> Binary:
     url = binarydef.get('url')
     if not url:
-        return ErrorMsg(f"Plugin definition for {platform} should have an url")
+        raise ParseError(f"Plugin definition for {platform} should have an url")
     build_platform = binarydef.get('build_platform')
     if not build_platform:
-        return ErrorMsg(f"Plugin definition for {platform} should have a build_platform")
+        raise ParseError(f"Plugin definition for {platform} should have a build_platform")
     return Binary(platform=platform, url=url, build_platform=build_platform,
                   extractpath=binarydef.get('extractpath', ''))
 
 
+def _parse_asset(assetdef: dict, defaulturl: str = '') -> Asset:
+    url = assetdef.get('url', defaulturl)
+    extractpath = assetdef.get('extractpath') or assetdef.get('path')
+    if not url and not extractpath:
+        raise ParseError(f"Asset definition should have an URL or an extractpath key")
+    paths = extractpath.split(";") if extractpath else None
+    return Asset(url=url, patterns=paths, platform=assetdef.get('platform', 'all'), name=assetdef.get('name', ''))
+
+
+def _enforce_key(d: dict, key: str):
+    value = d.get(key)
+    if value is None:
+        raise SchemaError(f"Plugin has no {key} key")
+    return value
+
+
 def _plugin_from_dict(d: dict, pluginurl: str, subpath: str = '') -> Plugin:
-    def get_key(key):
-        value = d.get(key)
-        if value is None:
-            raise PluginDefinitionError(f"Plugin has no {key} key")
-        return value
-
-    version = _normalize_version(get_key('version'))
-    binariesd = get_key('binaries')
-    results = [_parse_binary(platform, binary_definition)
-               for platform, binary_definition in binariesd.items()]
-
-    binaries = {}
-    for result in results:
-        if isinstance(result, ErrorMsg):
-            _errormsg(result)
-        else:
-            binaries[result.platform] = result
-
-    if not binaries:
-        raise PluginDefinitionError("No valid binaries defined")
-
-    opcodes = get_key('opcodes')
+    version = _normalize_version(_enforce_key(d, 'version'))
+    opcodes = _enforce_key(d, 'opcodes')
     opcodes.sort()
 
+    binaries: Dict[str, Binary] = {}
+    for platform, binarydef in _enforce_key(d, 'binaries').items():
+        try:
+            binary = _parse_binary(platform, binarydef)
+            binaries[binary.platform] = binary
+        except ParseError as e:
+            _errormsg(str(e))
+
+    if not binaries:
+        raise SchemaError("No valid binaries defined")
+
+    assets: List[Asset] = []
+    assetdefs = d.get('assets')
+    if assetdefs:
+        if not isinstance(assetdefs, list):
+            raise SchemaError(f"assets should hold a list of asset definitions, got {assetdefs}")
+        for assetdef in assetdefs:
+            try:
+                assets.append(_parse_asset(assetdef, defaulturl=pluginurl))
+            except ParseError as e:
+                _errormsg(str(e))
+
     return Plugin(
-        name=get_key('name'),
+        name=_enforce_key(d, 'name'),
         version=version,
-        short_description=get_key('short_description'),
-        author=get_key('author'),
-        email=get_key('email'),
-        csound_version=get_key('csound_version'),
+        short_description=_enforce_key(d, 'short_description'),
+        author=_enforce_key(d, 'author'),
+        email=_enforce_key(d, 'email'),
+        csound_version=_enforce_key(d, 'csound_version'),
         opcodes=opcodes,
         binaries=binaries,
         doc_folder=d.get('doc', ''),
         long_description=d.get('long_description', ''),
         url=pluginurl,
-        manifest_relative_path = subpath
+        manifest_relative_path = subpath,
+        assets=assets,
+        cloned_path=_git_local_path(pluginurl)
     )
 
 
@@ -712,9 +913,9 @@ def _rm_dir(path: Path) -> None:
 
 def _copy_recursive(src: Path, dest: Path) -> None:
     if not dest.exists():
-        raise OSError(f"Destination path ({str(dest)}) does not exist")
+        raise OSError(f"Destination path ({dest.as_posix()}) does not exist")
     if not dest.is_dir():
-        raise OSError(f"Destination path (str{dest}) should be a directory")
+        raise OSError(f"Destination path ({dest.as_posix()}) should be a directory")
 
     if src.is_dir():
         _debug(f"Copying all files under {str(src)} to {str(dest)}")
@@ -743,14 +944,14 @@ def _plugin_definition_from_file(filepath: Union[str, Path], url: str = '',
     Returns:
         a Plugin
 
-    Raises PluginDefinitionError if the definition is invalid (it does not define
+    Raises SchemaError if the definition is invalid (it does not define
     all needed keys) or json.JSONDecodeError if the json itself is not correctly formatted
     """
     # absolute path
     path = Path(filepath).resolve()
 
     if not path.exists():
-        raise PluginDefinitionError(f"plugin definition file ({path}) not found")
+        raise SchemaError(f"plugin definition file ({path}) not found")
 
     assert path.suffix == ".json", "Plugin definition file should be a .json file"
 
@@ -762,13 +963,18 @@ def _plugin_definition_from_file(filepath: Union[str, Path], url: str = '',
         _errormsg(f"Could not parse json file {path}:\n    {e}")
         raise e
 
-    try:
-        plugin = _plugin_from_dict(d, pluginurl='')
-        plugin.manifest_relative_path = manifest_relative_path
-        plugin.url = url
+    _debug("... manifest json ok")
 
-    except PluginDefinitionError as e:
+    try:
+        plugin = _plugin_from_dict(d, pluginurl=url)
+        plugin.manifest_relative_path = manifest_relative_path
+    except SchemaError as e:
+        _errormsg(f"Error while processing {filepath}")
         raise e
+    except Exception as e:
+        _errormsg(f"Unknown error while processing {filepath}")
+        raise e
+
     return plugin
 
 
@@ -799,6 +1005,23 @@ def _print_with_line_numbers(s: str) -> None:
         print(f"{i+1:003d} {line}")
 
 
+def _download_file(url: str, cache=True) -> Path:
+    """
+    Download the given url. Raises RuntimeError if failed
+    """
+    path = register.downloaded_files.get(url)
+    if path is not None and cache:
+        return path
+    tmpfile, httpmsg = urllib.request.urlretrieve(url)
+    if not os.path.exists(tmpfile):
+        raise RuntimeError(f"Error downloading file {url}")
+    baseoutfile = os.path.split(url)[1]
+    path = Path(tmpfile).parent / baseoutfile
+    shutil.move(tmpfile, path.as_posix())
+    register.downloaded_files[url] = path
+    return path
+
+
 def default_system_plugins_path() -> List[Path]:
     platform = _get_platform()
     if platform == 'linux':
@@ -825,8 +1048,8 @@ def system_plugins_path() -> Optional[Path]:
     Get the path were system plugins are installed.
     """
     # first check if the user has set OPCODE6DIR64
-    if (path := _cache.get('system-plugins-path')) is not None:
-        return path
+    if register.system_plugins_path is not None:
+        return register.system_plugins_path
     opcode6dir64 = os.getenv("OPCODE6DIR64")
     if opcode6dir64:
         possible_paths = [Path(p) for p in opcode6dir64.split(_get_path_separator())]
@@ -839,7 +1062,7 @@ def system_plugins_path() -> Optional[Path]:
         return None
     assert isinstance(out, Path)
     assert out.exists() and out.is_dir() and out.is_absolute()
-    _cache['system-plugins-path'] = out
+    register.system_plugins_path = out
     return out
 
 
@@ -855,6 +1078,9 @@ def user_installed_dlls() -> List[Path]:
 
 
 def system_installed_dlls() -> List[Path]:
+    """
+    LIst of plugins installed at the system's path
+    """
     path = system_plugins_path()
     if not path or not path.exists():
         return []
@@ -880,7 +1106,7 @@ class MainIndex:
         self.indexfile = datarepo / "rissetindex.json"
         if not datarepo.exists():
             updateindex = False
-            _git_clone(INDEX_GIT_REPOSITORY, datarepo, depth=1)
+            _git_clone_into(INDEX_GIT_REPOSITORY, datarepo, depth=1)
         else:
             updateindex = update
         assert datarepo.exists()
@@ -889,7 +1115,7 @@ class MainIndex:
 
         self.datarepo = datarepo
         self.version = ''
-        self.pluginsources: Dict[str, PluginSource] = {}
+        self.pluginsources: Dict[str, IndexItem] = {}
         self.plugins: Dict[str, Plugin] = {}
         self._parseindex(updateindex=updateindex, updateplugins=update)
 
@@ -909,7 +1135,6 @@ class MainIndex:
 
         self.version = d.get('version', '')
         plugins = d.get('plugins', {})
-        repoindex = {}
         updated = set()
 
         for name, plugindef in plugins.items():
@@ -922,16 +1147,10 @@ class MainIndex:
                                  f"Plugin {name} does not define a url")
             assert _is_git_url(url), f"url for plugin {name} is not a git repository: {url}"
             path = plugindef.get('path', '')
-            pluginsource = PluginSource(name=name, url=url, path=path)
-            pluginpath = pluginsource.localpath
-            if pluginsource.url in repoindex and pluginsource.localpath != repoindex[pluginsource.url]:
-                _info(f"Repository {pluginsource.url} already in cloned in path {pluginsource.localpath},"
-                     f" but {pluginsource.name} will clone it under a different path: "
-                     f"{repoindex[pluginsource.url]}")
-            repoindex[pluginsource.url] = pluginsource.localpath
-            if not pluginpath.exists():
-                _git_clone(pluginsource.url, pluginpath, depth=1)
-            elif updateplugins and pluginpath not in updated:
+            pluginsource = IndexItem(name=name, url=url, path=path)
+            pluginpath = _git_local_path(url)
+            assert pluginpath.exists()
+            if updateplugins and pluginpath not in updated:
                 _git_update(pluginpath)
                 updated.add(pluginpath)
 
@@ -1149,12 +1368,7 @@ class MainIndex:
         # The manifest defines a path. If it is relative, it is relative to the
         # manifest itself.
         if _is_url(bindef.url):
-            baseoutfile = os.path.split(bindef.url)[1]
-            tmpfile, httpmsg = urllib.request.urlretrieve(bindef.url)
-            if not os.path.exists(tmpfile):
-                raise RuntimeError(f"Error downloading file {bindef.url}")
-            path = Path(tmpfile).parent / baseoutfile
-            shutil.move(tmpfile, path.as_posix())
+            path = _download_file(bindef.url)
         else:
             # url points to a local file, relative to the manifest
             manifestpath = plugin.local_manifest_path()
@@ -1167,17 +1381,17 @@ class MainIndex:
             return path
         elif path.suffix == '.zip':
             if not bindef.extractpath:
-                raise PluginDefinitionError(
+                raise SchemaError(
                     f"The binary definition for {plugin.name} has a compressed url {bindef.url}"
                     f" but does not define an `extractpath` attribute to locate the "
                     f"binary within the compressed file")
             try:
-                dll = _extract_from_zip(path.as_posix(), bindef.extractpath)
+                dll = _zip_extract_file(path.as_posix(), bindef.extractpath)
                 return Path(dll)
             except Exception as e:
                 raise RuntimeError(f"Error while extracting {bindef.extractpath} from zip {str(path)}: {e}")
         else:
-            raise PluginDefinitionError(f"Suffix {path.suffix} not supported in url: {bindef.url}")
+            raise SchemaError(f"Suffix {path.suffix} not supported in url: {bindef.url}")
 
     def plugin_installed_version(self, plugin: Plugin) -> Optional[str]:
         """
@@ -1251,7 +1465,7 @@ class MainIndex:
             return ErrorMsg(f"Platform not supported (plugin: {plugin.name}): {e}")
         except RuntimeError as e:
             return ErrorMsg(f"Error while getting (plugin: {plugin.name}): {e}")
-        except PluginDefinitionError as e:
+        except SchemaError as e:
             return ErrorMsg(f"The plugin definition for {plugin.name} has errors: {e}")
 
         installpath = user_plugins_path()
@@ -1289,7 +1503,14 @@ class MainIndex:
         with open(manifest_path.as_posix(), "w") as f:
             f.write(manifest_json)
         _debug(f"Saved manifest for plugin {plugin.name} to {manifest_path}")
-        _debug(manifest_json)
+
+        # Install assets, if any
+        if plugin.assets:
+            for asset in plugin.assets:
+                if asset.platform == 'all' or asset.platform == platform:
+                    _debug(f"Installing asset {asset.identifier()}")
+                    self.install_asset(asset, plugin.name)
+
         # no errors
         return None
 
@@ -1378,15 +1599,17 @@ class MainIndex:
             _errormsg(f"Plugin {pluginname} unknown")
             return False
         info = self.installed_plugin_info(plugdef)
-        print()
-        print(f"Plugin     : {plugdef.name}")
-        print(f"Author     : {plugdef.author}")
-        print(f"URL        : {plugdef.url}")
-        print(f"Version    : {plugdef.version}")
+        print("\n"
+              f"Plugin        : {plugdef.name}    \n"
+              f"Author        : {plugdef.author} ({plugdef.email}) \n"
+              f"URL           : {plugdef.url}     \n"
+              f"Version       : {plugdef.version} \n"
+              f"Csound version: >= {plugdef.csound_version}"
+        )
         if info:
-            print(f"Installed  : {info.versionstr} (path: {info.dllpath.as_posix()})")
-            print(f"Manifest   : {info.installed_manifest_path.as_posix()}")
-        print(f"Abstract   : {plugdef.short_description}")
+            print(f"Installed     : {info.versionstr} (path: {info.dllpath.as_posix()}) \n"
+                  f"Manifest      : {info.installed_manifest_path.as_posix() if info.installed_manifest_path else 'No manifest (installed manually)'}")
+        print(f"Abstract      : {plugdef.short_description}")
         if plugdef.long_description.strip():
             print("Description:")
             for line in textwrap.wrap(plugdef.long_description, 72):
@@ -1398,9 +1621,15 @@ class MainIndex:
         print(f"Opcodes:")
         opcstrs = textwrap.wrap(", ".join(plugdef.opcodes), 72)
         for s in opcstrs:
-            print(" " * 3, s)
+            print("   ", s)
 
-        print(f"Minimal csound version : {plugdef.csound_version}")
+        if plugdef.assets:
+            print("Assets:")
+            for asset in plugdef.assets:
+                print(f"    * identifier: {_abbrev(asset.identifier(), 70)}\n"
+                      f"      url: {asset.url}\n"
+                      f"      paths: {', '.join(asset.patterns)}\n"
+                      f"      platform: {asset.platform}")
         print()
         return True
 
@@ -1408,7 +1637,7 @@ class MainIndex:
         """
         Uninstall the given plugin
 
-        This operation also removed the installation manifest, if the
+        This operation also removes the installation manifest, if the
         plugin was installed via risset. Plugins installed in the
         system's directory need to be removed manually.
 
@@ -1425,12 +1654,40 @@ class MainIndex:
             raise RuntimeError(f"Plugin is installed in the system folder and needs to"
                                f" be removed manually. Path: {info.dllpath.as_posix()}")
         os.remove(info.dllpath.as_posix())
-        if info.dllpath.exists():
-            raise RuntimeError(f"Attempted to remove {info.dllpath.as_posix()}, but it"
-                               f" still exists")
+        assert not info.dllpath.exists(), f"Attempted to remove {info.dllpath.as_posix()}, but failed"
         manifestpath = info.installed_manifest_path
         if manifestpath and manifestpath.exists():
             os.remove(manifestpath.as_posix())
+
+    def asset_folder(self, prefix: str = '') -> path:
+        if not prefix:
+            return RISSET_ASSETS_PATH
+        else:
+            return RISSET_ASSETS_PATH / prefix
+
+    def install_asset(self, asset: Asset, prefix: str) -> List[str]:
+        """
+        Install an Asset under a given prefix
+
+        Args:
+            asset: the Asset to install
+            prefix: the prefix to install it under.
+
+        Returns:
+            a list of installed file names (only the filename, not the
+            absolute path, the destination path is RISSET_ASSETS_PATH / prefix)
+        """
+        destination_folder = self.asset_folder(prefix)
+        sources = asset.retrieve()
+        if sources:
+            destination_folder.mkdir(parents=True, exist_ok=True)
+        for source in sources:
+            _debug(f"Copying asset {source} to {destination_folder}")
+            if source.is_dir():
+                shutil.copytree(source, destination_folder/source.name)
+            else:
+                shutil.copy(source, destination_folder)
+        return [f.name for f in sources]
 
 
 ###############################################################
@@ -1951,8 +2208,7 @@ def main():
     resetgroup = subparsers.add_parser("resetcache", help="Remove local clones of plugin's repositories")
 
     args = parser.parse_args()
-    if args.debug:
-        SETTINGS['debug'] = True
+    register.debug = args.debug
 
     if args.version:
         print(__version__)
@@ -1963,10 +2219,15 @@ def main():
         sys.exit(-1)
 
     try:
+        _debug("Creating main index")
         mainindex = MainIndex(update=args.update or args.command == 'update')
     except Exception as e:
-        _errormsg(str(e))
-        sys.exit(-1)
+        _debug("Failed to create main index")
+        if register.debug:
+            raise e
+        else:
+            _errormsg(str(e))
+            sys.exit(-1)
 
     if args.command == 'update':
         sys.exit(0)
