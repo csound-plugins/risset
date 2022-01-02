@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 
 import glob
 import sys
@@ -132,8 +132,9 @@ def _is_git_url(url: str) -> bool:
 def _debug(*msgs) -> None:
     """ Print debug info only if debugging is turned on """
     if register.debug:
-        caller = _inspect.stack()[1][3]
-        print(f"DEBUG::{caller[:24]}".ljust(32), ":", *msgs, file=sys.stderr)
+        l = 28
+        caller = _abbrev(_inspect.stack()[1][3], l)
+        print(f"DEBUG:{caller.ljust(l)}:", *msgs, file=sys.stderr)
 
 
 def _errormsg(msg: str) -> None:
@@ -646,9 +647,13 @@ def _get_binary(binary) -> Optional[str]:
 
 
 def _get_git_binary() -> str:
+    cached = register.cache.get('git-binary')
+    if cached:
+        return cached
     path = shutil.which("git")
     if not path or not os.path.exists(path):
         raise RuntimeError("git binary not found")
+    register.cache['git-binary'] = path
     return path
 
 
@@ -704,13 +709,34 @@ def _git_clone_into(repo: str, destination: Path, depth=1) -> None:
     subprocess.call(args)
 
 
-def _git_update(repopath: Path, depth=0) -> None:
+def _git_repo_needs_update(repopath: Path) -> bool:
+    """
+    Check if a repository needs to be updated
+
+    NB: for our use case, where no merges are expected, to update is just
+    as fast as to check first and then act.
+    """
+    cwd = os.path.abspath(os.path.curdir)
+    os.chdir(str(repopath))
+    git = _get_git_binary()
+    subprocess.call([git, "fetch"])
+    headhash = subprocess.check_output([git, "rev-parse", "HEAD"])
+    upstreamhash =subprocess.check_output([git, "rev-parse", "master@{upstream}"])
+    _debug(f"Checking hashes, head: {headhash}, upstream: {upstreamhash}")
+    os.chdir(cwd)
+    return headhash != upstreamhash
+
+
+def _git_update(repopath: Path, depth=0, check_if_needed=False) -> None:
     """
     Update the git repo at the given path
     """
     _debug(f"Updating git repository: {repopath}")
     if not repopath.exists():
         raise OSError(f"Can't find path to git repository {repopath}")
+    if check_if_needed and not _git_repo_needs_update(repopath):
+        _debug(f"Repository {repopath} up to date")
+        return
     gitbin = _get_git_binary()
     cwd = os.path.abspath(os.path.curdir)
     os.chdir(str(repopath))
@@ -1092,11 +1118,10 @@ def system_installed_dlls() -> List[Path]:
     return list(path.glob("*" + ext))
 
 
-def _datarepo_localpath():
-    return RISSET_ROOT / 'risset-data'
-
-
 class MainIndex:
+    """
+    This class holds risset's main index
+    """
     def __init__(self, datarepo: Path = None, update=False):
         """
         Args:
@@ -1121,9 +1146,16 @@ class MainIndex:
         self.version = ''
         self.pluginsources: Dict[str, IndexItem] = {}
         self.plugins: Dict[str, Plugin] = {}
-        self._parseindex(updateindex=updateindex, updateplugins=update)
+        self._parse_index(updateindex=updateindex, updateplugins=update)
 
-    def _parseindex(self, updateindex=False, updateplugins=False) -> None:
+    def _parse_index(self, updateindex=False, updateplugins=False, fail_if_error=False) -> None:
+        """
+        Parse the main index and each entity defined within it
+
+        If there are errors for a plugin definition, this plugin is skipped and an
+        error message is printed, unless fail_if_error is True, in which case the
+        whole operation is cancelled
+        """
         self.plugins.clear()
         self.pluginsources.clear()
         if updateindex:
@@ -1162,11 +1194,21 @@ class MainIndex:
 
         if self.pluginsources:
             for name, pluginsource in self.pluginsources.items():
-                plugin = self._parse_plugin(name)
-                self.plugins[name] = plugin
+                try:
+                    _debug(f"Parsing plugin definition for {name}")
+                    plugin = self._parse_plugin(name)
+                    self.plugins[name] = plugin
+                except Exception as e:
+                    if fail_if_error:
+                        raise e
+                    else:
+                        _errormsg(f"Error while parsing plugin definition for {name}: {e}")
 
     def update(self):
-        self._parseindex(updateindex=True, updateplugins=True)
+        """
+        Update all sources and reread the index
+        """
+        self._parse_index(updateindex=True, updateplugins=True)
 
     def build_documentation(self, dest: Path = None, buildhtml=True,  onlyinstalled=False) -> Path:
         """
@@ -1191,11 +1233,10 @@ class MainIndex:
         """
         return _generate_documentation(self, dest=dest, buildhtml=buildhtml, onlyinstalled=onlyinstalled)
 
-    def _parse_plugin(self, pluginname) -> Optional[Plugin]:
+    def _parse_plugin(self, pluginname: str) -> Optional[Plugin]:
         pluginsource = self.pluginsources.get(pluginname)
         if pluginsource is None:
             raise KeyError(f"Plugin {pluginname} not known. Known plugins: {self.pluginsources.keys()}")
-        # todo
         manifestpath = pluginsource.manifest_path()
         assert manifestpath.exists()
         manifeststr = open(manifestpath).read()
@@ -1662,12 +1703,6 @@ class MainIndex:
         if manifestpath and manifestpath.exists():
             os.remove(manifestpath.as_posix())
 
-    def asset_folder(self, prefix: str = '') -> path:
-        if not prefix:
-            return RISSET_ASSETS_PATH
-        else:
-            return RISSET_ASSETS_PATH / prefix
-
     def install_asset(self, asset: Asset, prefix: str) -> List[str]:
         """
         Install an Asset under a given prefix
@@ -1680,7 +1715,7 @@ class MainIndex:
             a list of installed file names (only the filename, not the
             absolute path, the destination path is RISSET_ASSETS_PATH / prefix)
         """
-        destination_folder = self.asset_folder(prefix)
+        destination_folder = RISSET_ASSETS_PATH / prefix
         sources = asset.retrieve()
         if sources:
             destination_folder.mkdir(parents=True, exist_ok=True)
@@ -1698,29 +1733,26 @@ class MainIndex:
 ###############################################################
 
 
+def _is_package_installed(pkg: str) -> bool:
+    import importlib.util
+    return importlib.util.find_spec(pkg) is not None
+
+
 def _call_mkdocs(folder: Path, *args: str):
     currentdir = os.getcwd()
     os.chdir(folder)
-    subprocess.call(["python", "-m", "mkdocs"] + list(args))
+    subprocess.call([sys.executable, "-m", "mkdocs"] + list(args))
     os.chdir(currentdir)
 
 
 def _is_mkdocs_installed() -> bool:
-    if sys.platform == "linux" or sys.platform == "darwin":
-        return shutil.which("mkdocs") is not None
-    else:
-        try:
-            import mkdocs
-            return True
-        except ImportError as e:
-            return False
+    return _is_package_installed("mkdocs") or shutil.which("mkdocs") is not None
 
 
 def _generate_documentation(index: MainIndex, dest: Path = None, 
                             buildhtml=True, onlyinstalled=False
                             ) -> Path:
     if dest is None:
-        # ~/.local/share/risset/man
         dest = RISSET_GENERATED_DOCS
     _compile_docs(index=index, dest=dest / "docs", makeindex=True,
                   onlyinstalled=onlyinstalled)
@@ -1738,7 +1770,7 @@ def _generate_documentation(index: MainIndex, dest: Path = None,
 def _compile_docs(index: MainIndex, dest: Path, makeindex=True,
                   onlyinstalled=False) -> None:
     """
-    Gathers all manpages and generates a mkdocs compatible docs folder
+    Gather all manpages and generate a mkdocs compatible docs folder
     """
     dest = dest.expanduser().absolute()
     if dest.exists():
@@ -2032,21 +2064,15 @@ def cmd_man(idx: MainIndex, args) -> bool:
     return True
 
 
-def cmd_update(idx: MainIndex, args) -> bool:
-    idx.update()
-    return True
-
-
 def cmd_resetcache(args) -> None:
     _rm_dir(RISSET_DATAREPO_LOCALPATH)
     _rm_dir(RISSET_CLONES_PATH)
 
 
 def update_self():
-    """ upgrade risset itself """
-    python = sys.executable
+    """Upgrade risset itself"""
     _info("Updating risset")
-    subprocess.check_call([python, "-m", "pip", "install", "risset", "--upgrade"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "risset", "--upgrade"])
 
 
 def cmd_list_installed_opcodes(plugins_index: MainIndex, args) -> bool:
@@ -2084,12 +2110,6 @@ def _print_file(path: Path) -> None:
     print(text)
 
 
-def _has(cmd: str) -> bool:
-    """ Returns True if cmd is in the path """
-    path = shutil.which(cmd)
-    return path is not None
-
-
 def _show_markdown_file(path: Path) -> None:
     if not _running_from_terminal():
         _open_in_default_application(str(path))
@@ -2102,119 +2122,86 @@ def _show_markdown_file(path: Path) -> None:
     print(highlight(code, MarkdownLexer(), TerminalTrueColorFormatter()))
 
 
-def _show_markdown_file_(path: Path) -> None:
-    if not _running_from_terminal():
-        _open_in_default_application(str(path))
-        return
-
-    if sys.platform == 'linux' or sys.platform == 'darwin':
-        if _has("bat"):
-            subprocess.call(["bat", "--style", "header", str(path)])
-        elif _has("pygmentize"):
-            subprocess.call(["pygmentize", str(path)])
-        elif _has("highlight"):
-            #  highlight --force --out-format="${highlight_format}" --style="${HIGHLIGHT_STYLE}"
-            subprocess.call(["highlight", "--force", "--out-format=ANSI", str(path)])
-        else:
-            print("Considere installing 'pygmentize', 'highlight' or 'bat' for better syntax highlighting")
-            print()
-            _print_file(path)
-    else:
-        if _has("bat"):
-            subprocess.call(["bat", "--style", "header", str(path)], shell=True)
-        elif _has("pygmentize"):
-            subprocess.call(["pygmentize", str(path)])
-        elif _has("highlight"):
-            #  highlight --force --out-format="${highlight_format}" --style="${HIGHLIGHT_STYLE}"
-            subprocess.call(["highlight", "--force", "--out-format=ANSI", str(path)])
-        else:
-            print("Considere installing 'highlight', 'bat' or 'pygmentize' for better syntax highlighting")
-            print()
-            _print_file(path)
-
-
-def add_flag(parser, flag, help=""):
-    parser.add_argument(flag, action="store_true", help=help)
-
-
 def main():
     # Preliminary checks
     if sys.platform not in ("linux", "darwin", "win32"):
         _errormsg(f"Platform not supported: {sys.platform}")
         sys.exit(-1)
 
-    if _get_binary("git") is None:
+    if _get_git_binary() is None:
         _errormsg("git command not found. Check that git is installed and in the PATH")
         sys.exit(-1)
 
+    def flag(parser, flag, help=""):
+        parser.add_argument(flag, action="store_true", help=help)
+
     # Main parser
     parser = argparse.ArgumentParser()
-    add_flag(parser, "--debug", help="Print debug information")
-    add_flag(parser, "--update", help="Update the plugins data before any action")
-    add_flag(parser, "--version")
+    flag(parser, "--debug", help="Print debug information")
+    flag(parser, "--update", help="Update the plugins data before any action")
+    flag(parser, "--version")
     subparsers = parser.add_subparsers(dest='command')
 
     # List command
-    list_group = subparsers.add_parser('list', help="List packages")
-    add_flag(list_group, "--json", help="Outputs list as json")
-    add_flag(list_group, "--all", "List all plugins, even those without a binary for the current platform")
-    add_flag(list_group, "--nameonly", help="Output just the name of each plugin")
-    add_flag(list_group, "--installed", help="List only installed plugins")
-    add_flag(list_group, "--notinstalled", help="List only plugins which are not installed")
-    list_group.add_argument("-o", "--outfile", help="Outputs to a file")
-    list_group.add_argument("-1", "--oneline", action="store_true", help="List each plugin in one line")
-    list_group.set_defaults(func=cmd_list)
+    list_cmd = subparsers.add_parser('list', help="List packages")
+    flag(list_cmd, "--json", help="Outputs list as json")
+    flag(list_cmd, "--all", "List all plugins, even those without a binary for the current platform")
+    flag(list_cmd, "--nameonly", help="Output just the name of each plugin")
+    flag(list_cmd, "--installed", help="List only installed plugins")
+    flag(list_cmd, "--notinstalled", help="List only plugins which are not installed")
+    list_cmd.add_argument("-o", "--outfile", help="Outputs to a file")
+    list_cmd.add_argument("-1", "--oneline", action="store_true", help="List each plugin in one line")
+    list_cmd.set_defaults(func=cmd_list)
 
     # Install command
-    install_group = subparsers.add_parser("install", help="Install a package")
-    add_flag(install_group, "--force", help="Force install/reinstall")
-    install_group.add_argument("plugins", nargs="+",
-                               help="Name of the plugin/plugins to install. "
-                                    "Glob pattern are supported (enclose them inside quotation marks)")
-    install_group.set_defaults(func=cmd_install)
+    install_cmd = subparsers.add_parser("install", help="Install a package")
+    flag(install_cmd, "--force", help="Force install/reinstall")
+    install_cmd.add_argument("plugins", nargs="+",
+                             help="Name of the plugin/plugins to install. "
+                                  "Glob pattern are supported (enclose them inside quotation marks)")
+    install_cmd.set_defaults(func=cmd_install)
 
     # remove command
-    rm_group = subparsers.add_parser("remove", help="Remove a package")
-    rm_group.add_argument("plugin", nargs="+", help="Plugin/s to remove")
-    rm_group.set_defaults(func=cmd_rm)
+    rm_cmd = subparsers.add_parser("remove", help="Remove a package")
+    rm_cmd.add_argument("plugin", nargs="+", help="Plugin/s to remove")
+    rm_cmd.set_defaults(func=cmd_rm)
 
     # show command
-    show_group = subparsers.add_parser("show", help="Show information about a plugin")
-    show_group.add_argument("plugin", help="Plugin to gather information about")
-    show_group.set_defaults(func=cmd_show)
+    show_cmd = subparsers.add_parser("show", help="Show information about a plugin")
+    show_cmd.add_argument("plugin", help="Plugin to gather information about")
+    show_cmd.set_defaults(func=cmd_show)
 
     # build docs
-    makedocs_group = subparsers.add_parser("makedocs", help="Build the documentation for all defined plugins. "
+    makedocs_cmd = subparsers.add_parser("makedocs", help="Build the documentation for all defined plugins. "
                                                             "This depends on mkdocs being installed")
-    makedocs_group.add_argument("--onlyinstalled", action="store_true", help="Build docs only for installed plugins")
-    makedocs_group.add_argument("-o", "--outfolder", help="Destination folder to place the documentation",
+    makedocs_cmd.add_argument("--onlyinstalled", action="store_true", help="Build docs only for installed plugins")
+    makedocs_cmd.add_argument("-o", "--outfolder", help="Destination folder to place the documentation",
                                 default='')
-    makedocs_group.set_defaults(func=cmd_makedocs)
+    makedocs_cmd.set_defaults(func=cmd_makedocs)
 
     # man command
-    man_group = subparsers.add_parser("man", help="Open manual page for an installed opcode. "
-                                                  "Multiple opcodes or a glob wildcard are allowed")
-    man_group.add_argument("-p", "--path", action="store_true",
-                           help="Only print the path of the manual page. The format is <opcode>:<path>")
-    man_group.add_argument("-s", "--simplepath", action="store_true",
-                           help="Print just the path of the manual page")
-    man_group.add_argument("-m", "--markdown", action="store_true",
-                           help="Use the .md page instead of the .html version")
-    man_group.add_argument("-e", "--external", action="store_true",
-                           help="Open the man page in the default app. This is only"
+    man_cmd = subparsers.add_parser("man", help="Open manual page for an installed opcode. "
+                                                "Multiple opcodes or a glob wildcard are allowed")
+    man_cmd.add_argument("-p", "--path", action="store_true",
+                         help="Only print the path of the manual page. The format is <opcode>:<path>")
+    man_cmd.add_argument("-s", "--simplepath", action="store_true",
+                         help="Print just the path of the manual page")
+    man_cmd.add_argument("-m", "--markdown", action="store_true",
+                         help="Use the .md page instead of the .html version")
+    man_cmd.add_argument("-e", "--external", action="store_true",
+                         help="Open the man page in the default app. This is only"
                                 " used when opening the markdown man page.")
-    man_group.add_argument("--html", action="store_true",
-                           help="Use the .html page (opens it in the default browser")
-    man_group.add_argument("opcode", nargs="*", help="Show the manual page of this opcode/opcodes")
-    man_group.set_defaults(func=cmd_man)
+    man_cmd.add_argument("--html", action="store_true",
+                         help="Use the .html page (opens it in the default browser")
+    man_cmd.add_argument("opcode", nargs="*", help="Show the manual page of this opcode/opcodes")
+    man_cmd.set_defaults(func=cmd_man)
 
     # update command
-    update_group = subparsers.add_parser("update", help="Update repository")
-    update_group.set_defaults(func=cmd_update)
+    update_cmd = subparsers.add_parser("update", help="Update repository")
 
     # list-opcodes
-    listopcodes = subparsers.add_parser("listopcodes", help="List installed opcodes")
-    listopcodes.set_defaults(func=cmd_list_installed_opcodes)
+    listopcode_cmd = subparsers.add_parser("listopcodes", help="List installed opcodes")
+    listopcode_cmd.set_defaults(func=cmd_list_installed_opcodes)
     
     # reset
     resetgroup = subparsers.add_parser("resetcache", help="Remove local clones of plugin's repositories")
@@ -2232,7 +2219,7 @@ def main():
 
     try:
         _debug("Creating main index")
-        mainindex = MainIndex(update=args.update or args.command == 'update')
+        mainindex = MainIndex(update=(args.update or args.command == 'update'))
     except Exception as e:
         _debug("Failed to create main index")
         if register.debug:
