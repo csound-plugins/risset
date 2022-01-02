@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 import glob
 import sys
@@ -199,6 +199,7 @@ class Asset:
         assert self.url
         if _is_git_url(self.url):
             return _git_local_path(self.url)
+        _debug(f"Downloading url {self.url}")
         return _download_file(self.url)
 
     def retrieve(self) -> List[Path]:
@@ -305,8 +306,8 @@ class IndexItem:
         """
         manifest = self.manifest_path()
         assert manifest.exists() and manifest.suffix == '.json'
-        plugin = _plugin_definition_from_file(manifest.as_posix(), url=self.url,
-                                              manifest_relative_path=self.path)
+        plugin = _read_plugindef(manifest.as_posix(), url=self.url,
+                                 manifest_relative_path=self.path)
         plugin.cloned_path = _git_local_path(self.url)
         return plugin
 
@@ -566,7 +567,7 @@ def _zip_extract(zipfile: Path, patterns: List[str]) -> List[Path]:
     return out
 
 
-def _zip_extract_file(zipfile: Path, extractpath: str) -> str:
+def _zip_extract_file(zipfile: Path, extractpath: str) -> Path:
     """
     Extracts a file from a zipfile, returns the path to the extracted file
 
@@ -931,9 +932,9 @@ def _copy_recursive(src: Path, dest: Path) -> None:
 
 
 
-def _plugin_definition_from_file(filepath: Union[str, Path], url: str = '',
-                                 manifest_relative_path: str = ''
-                                 ) -> Plugin:
+def _read_plugindef(filepath: Union[str, Path], url: str = '',
+                    manifest_relative_path: str = ''
+                    ) -> Plugin:
     """
     Create a Plugin from a plugin definition file (risset.json)
 
@@ -985,7 +986,10 @@ def _normalize_path(path: str) -> str:
     return path
 
 
-def _make_installation_manifest(plugin: Plugin, platform: str) -> dict:
+def _make_install_manifest(plugin: Plugin, platform: str) -> dict:
+    """
+    Create an installation manifest dict
+    """
     out = {}
     out['name'] = plugin.name
     out['author'] = plugin.author
@@ -1226,7 +1230,7 @@ class MainIndex:
                 return system_dll, False
         return None, False
 
-    def get_installed_manifests_path(self) -> Path:
+    def installed_manifests_path(self) -> Path:
         """
         Returns the path to were installation manifests are saved in this system
         """
@@ -1239,7 +1243,7 @@ class MainIndex:
         """
         Return a list of all installed manifests
         """
-        path = self.get_installed_manifests_path()
+        path = self.installed_manifests_path()
         manifests = list(path.glob("*.json"))
         return manifests
 
@@ -1386,8 +1390,7 @@ class MainIndex:
                     f" but does not define an `extractpath` attribute to locate the "
                     f"binary within the compressed file")
             try:
-                dll = _zip_extract_file(path.as_posix(), bindef.extractpath)
-                return Path(dll)
+                return _zip_extract_file(path, bindef.extractpath)
             except Exception as e:
                 raise RuntimeError(f"Error while extracting {bindef.extractpath} from zip {str(path)}: {e}")
         else:
@@ -1489,10 +1492,10 @@ class MainIndex:
                                 f"is not present")
 
         # install manifest
-        manifests_path = self.get_installed_manifests_path()
+        manifests_path = self.installed_manifests_path()
         if not manifests_path.exists():
             manifests_path.mkdir(parents=True)
-        manifest = _make_installation_manifest(plugin, platform=platform)
+        manifest = _make_install_manifest(plugin, platform=platform)
         manifest_path = manifests_path / f"{plugin.name}.json"
         try:
             manifest_json = json.dumps(manifest, indent=True)
@@ -2092,6 +2095,18 @@ def _show_markdown_file(path: Path) -> None:
         _open_in_default_application(str(path))
         return
 
+    from pygments import highlight
+    from pygments.lexers import MarkdownLexer
+    from pygments.formatters import TerminalTrueColorFormatter
+    code = open(path).read()
+    print(highlight(code, MarkdownLexer(), TerminalTrueColorFormatter()))
+
+
+def _show_markdown_file_(path: Path) -> None:
+    if not _running_from_terminal():
+        _open_in_default_application(str(path))
+        return
+
     if sys.platform == 'linux' or sys.platform == 'darwin':
         if _has("bat"):
             subprocess.call(["bat", "--style", "header", str(path)])
@@ -2131,9 +2146,6 @@ def main():
     if _get_binary("git") is None:
         _errormsg("git command not found. Check that git is installed and in the PATH")
         sys.exit(-1)
-
-    # csound_version = _csound_version()
-    # debug(f"Csound version: {csound_version}")
 
     # Main parser
     parser = argparse.ArgumentParser()
