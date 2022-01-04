@@ -24,10 +24,11 @@ import urllib.request
 from pathlib import Path
 from zipfile import ZipFile
 import inspect as _inspect
+import re
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from typing import List, Dict, Tuple, Union, Optional
+    from typing import List, Dict, Tuple, Union, Optional, Any
 
 
 
@@ -169,16 +170,18 @@ class Asset:
     The use case is for data files which are needed by a plugin at runtime
 
     Attribs:
-        url: the url where to download the assets from. It can be a git repository
-            or the direct url to a downloadable file/zip file
-        paths: the paths to extract from the url (if needed). Each item can be either
+        source: the source where to get the assets from. It can be a url to a git repository,
+            the direct url to a downloadable file/zip file or the path to a local
+            folder
+        patterns: the paths to extract from the source (if needed). Each item can be either
             a path relative to the root of the git or zip file, or a glob pattern. In the
             case where the url points to a concrete file (not a zip or a git repo), this
             attributes should be empty
         platform: if given, the platform for which this assets are valid (in the case
             of binaries of some kind)
+        name: the name of the asset (optional)
     """
-    url: str
+    source: str
     """the url where to download the assets from"""
 
     patterns: List[str] = None
@@ -189,23 +192,33 @@ class Asset:
 
     name: str = ''
 
+    def __post_init__(self):
+        assert self.source
+
     def identifier(self) -> str:
         if self.name:
             return self.name
         if self.patterns:
-            return f"{self.url}::{','.join(str(patt) for patt in self.patterns)}"
-        return self.url
+            return f"{self.source}::{','.join(str(patt) for patt in self.patterns)}"
+        return self.source
 
     def local_path(self) -> Path:
-        assert self.url
-        if _is_git_url(self.url):
-            return _git_local_path(self.url)
-        _debug(f"Downloading url {self.url}")
-        return _download_file(self.url)
+        assert self.source
+        if _is_url(self.source):
+            if _is_git_url(self.source):
+                return _git_local_path(self.source)
+            else:
+                _debug(f"Downloading url {self.source}")
+                return _download_file(self.source)
+        else:
+            # it is a path, check that it exists
+            source = Path(self.source)
+            assert source.exists(), f"Assert source does not exist: {source}"
+            return source
 
     def retrieve(self) -> List[Path]:
         """
-        Download and resolve all files
+        Download and resolve all files, if needed
 
         Returns:
             a (possibly empty) list of local paths which belong to this asset.
@@ -213,7 +226,8 @@ class Asset:
             files are extracted to a temp dir and a path to that temp dir
             is returned
         """
-        assert self.url and _is_url(self.url)
+        assert self.source and (_is_url(self.source) or os.path.isabs(self.source)), \
+            f"Source should be either a url or an absolute path: {self.source}"
         # self.url is either a git repo or a url pointing to a file
         root = self.local_path()
         if root.is_dir():
@@ -364,11 +378,6 @@ class Plugin:
     doc_folder: str = 'doc'
     assets: Optional[List[Asset]] = None
 
-    def __post_init__(self):
-        # manifest_relative_path should be either empty or a subdir of the repository's root. It should
-        # not point directly to the manifest, since this is hard-coded as risset.json
-        assert not self.manifest_relative_path or not os.path.splitext(self.manifest_relative_path)
-
     def __hash__(self):
         return hash((self.name, self.version))
 
@@ -421,6 +430,7 @@ class Opcode:
     name: str
     plugin: str
     syntaxes: Optional[List[str]] = None
+    installed: bool = True
 
 
 @dataclass
@@ -802,15 +812,22 @@ def _find_system_plugins_path(possible_paths: List[Path]) -> Optional[Path]:
     return None
 
 
+def _load_installation_manifest(path: Path) -> dict:
+    """
+    Load an installation manifest
 
-def _load_manifest(path: str) -> Union[dict, ErrorMsg]:
-    assert os.path.splitext(path)[1] == ".json"
+    An installation manifest is a json file produced during installation,
+    with metadata about what was installed (plugin, name, assets, etc).
+
+    Raises json.JSONDecodeError if the manifest's json could not be parsed
+    """
+    assert path.suffix == '.json'
     try:
         d = json.load(open(path))
         return d
-    except Exception as e:
-        _errormsg(f"Could not parse manifest {path}")
-        return ErrorMsg(str(e))
+    except json.JSONDecodeError as e:
+        _errormsg(f"Could not parse manifest json: {path}")
+        raise e
 
 
 def _is_url(s: str) -> bool:
@@ -847,7 +864,8 @@ def _normalize_version(version: str, default="0.0.0") -> str:
     return ".".join(str(i) for i in versiontup)
 
 
-def _parse_binary(platform: str, binarydef: dict) -> Binary:
+def _parse_binarydef(platform: str, binarydef: dict) -> Binary:
+    assert isinstance(binarydef, dict)
     url = binarydef.get('url')
     if not url:
         raise ParseError(f"Plugin definition for {platform} should have an url")
@@ -858,13 +876,13 @@ def _parse_binary(platform: str, binarydef: dict) -> Binary:
                   extractpath=binarydef.get('extractpath', ''))
 
 
-def _parse_asset(assetdef: dict, defaulturl: str = '') -> Asset:
-    url = assetdef.get('url', defaulturl)
+def _parse_asset(assetdef: dict, defaultsource: str) -> Asset:
+    source = assetdef.get('url', defaultsource)
     extractpath = assetdef.get('extractpath') or assetdef.get('path')
-    if not url and not extractpath:
+    if not source and not extractpath:
         raise ParseError(f"Asset definition should have an URL or an extractpath key")
     paths = extractpath.split(";") if extractpath else None
-    return Asset(url=url, patterns=paths, platform=assetdef.get('platform', 'all'), name=assetdef.get('name', ''))
+    return Asset(source=source, patterns=paths, platform=assetdef.get('platform', 'all'), name=assetdef.get('name', ''))
 
 
 def _enforce_key(d: dict, key: str):
@@ -874,21 +892,36 @@ def _enforce_key(d: dict, key: str):
     return value
 
 
-def _plugin_from_dict(d: dict, pluginurl: str, subpath: str = '') -> Plugin:
+def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
+    """
+    Args:
+        d: the loaded json
+        pluginurl: the url of this plugin
+        subpath: the path of the manifest's folder, relative to the root of the repository
+    """
+    clonepath = _git_local_path(pluginurl)
     version = _normalize_version(_enforce_key(d, 'version'))
+    pluginname = _enforce_key(d, 'name')
     opcodes = _enforce_key(d, 'opcodes')
     opcodes.sort()
 
     binaries: Dict[str, Binary] = {}
     for platform, binarydef in _enforce_key(d, 'binaries').items():
         try:
-            binary = _parse_binary(platform, binarydef)
+            binary = _parse_binarydef(platform, binarydef)
             binaries[binary.platform] = binary
         except ParseError as e:
+            _errormsg(f"Failed to parse binary definition for plugin {d.get('name', '??')}")
+            _errormsg(f"... source data: {binarydef}")
             _errormsg(str(e))
 
     if not binaries:
         raise SchemaError("No valid binaries defined")
+
+    manifest_local_folder = clonepath / subpath
+    if not manifest_local_folder.exists():
+        _errormsg(f"The local manifest folder corresponding to plugin {pluginname} was not found "
+                  f"({manifest_local_folder})")
 
     assets: List[Asset] = []
     assetdefs = d.get('assets')
@@ -897,7 +930,7 @@ def _plugin_from_dict(d: dict, pluginurl: str, subpath: str = '') -> Plugin:
             raise SchemaError(f"assets should hold a list of asset definitions, got {assetdefs}")
         for assetdef in assetdefs:
             try:
-                assets.append(_parse_asset(assetdef, defaulturl=pluginurl))
+                assets.append(_parse_asset(assetdef, defaultsource=manifest_local_folder.as_posix()))
             except ParseError as e:
                 _errormsg(str(e))
 
@@ -993,8 +1026,7 @@ def _read_plugindef(filepath: Union[str, Path], url: str = '',
     _debug("... manifest json ok")
 
     try:
-        plugin = _plugin_from_dict(d, pluginurl=url)
-        plugin.manifest_relative_path = manifest_relative_path
+        plugin = _plugin_from_dict(d, pluginurl=url, subpath=manifest_relative_path)
     except SchemaError as e:
         _errormsg(f"Error while processing {filepath}")
         raise e
@@ -1012,10 +1044,17 @@ def _normalize_path(path: str) -> str:
     return path
 
 
-def _make_install_manifest(plugin: Plugin, platform: str) -> dict:
+def _make_install_manifest(plugin: Plugin, assetfiles: List[str] = None) -> dict:
     """
     Create an installation manifest dict
+
+    Args:
+        plugin: the Plugin corresponding to this installation manifest
+        assetfiles: if given, a list of asset filenames installed by this plugin
+            (only the filenames, no path: all assets are placed in a flat folder
+            under the plugins prefix)
     """
+    platform = _get_platform()
     out = {}
     out['name'] = plugin.name
     out['author'] = plugin.author
@@ -1027,6 +1066,7 @@ def _make_install_manifest(plugin: Plugin, platform: str) -> dict:
     out['build_platform'] = plugin.binaries[platform].build_platform
     out['binary'] = plugin.binaries[platform].binary_filename()
     out['platform'] = platform
+    out['assetfiles'] = assetfiles or []
     return out
 
 
@@ -1146,9 +1186,10 @@ class MainIndex:
         self.version = ''
         self.pluginsources: Dict[str, IndexItem] = {}
         self.plugins: Dict[str, Plugin] = {}
+        self._cache: Dict[str, Any] = {}
         self._parse_index(updateindex=updateindex, updateplugins=update)
 
-    def _parse_index(self, updateindex=False, updateplugins=False, fail_if_error=False) -> None:
+    def _parse_index(self, updateindex=False, updateplugins=False, fail_when_debugging=True) -> None:
         """
         Parse the main index and each entity defined within it
 
@@ -1158,6 +1199,7 @@ class MainIndex:
         """
         self.plugins.clear()
         self.pluginsources.clear()
+        self._cache.clear()
         if updateindex:
             _git_update(self.datarepo)
 
@@ -1199,7 +1241,7 @@ class MainIndex:
                     plugin = self._parse_plugin(name)
                     self.plugins[name] = plugin
                 except Exception as e:
-                    if fail_if_error:
+                    if register.debug and fail_when_debugging:
                         raise e
                     else:
                         _errormsg(f"Error while parsing plugin definition for {name}: {e}")
@@ -1208,7 +1250,7 @@ class MainIndex:
         """
         Update all sources and reread the index
         """
-        self._parse_index(updateindex=True, updateplugins=True)
+        self._parse_index(updateindex=True, updateplugins=True, fail_if_error=register.debug)
 
     def build_documentation(self, dest: Path = None, buildhtml=True,  onlyinstalled=False) -> Path:
         """
@@ -1274,6 +1316,8 @@ class MainIndex:
     def installed_manifests_path(self) -> Path:
         """
         Returns the path to were installation manifests are saved in this system
+
+        Creates the path if it doesn't exist already
         """
         path = RISSET_ROOT / "installed-manifests"
         if not path.exists():
@@ -1339,14 +1383,10 @@ class MainIndex:
                 return None
             return htmlpage
         else:
-            opcodedef: Opcode = self.opcodes.get(opcode)
-            if not opcodedef:
-                raise ValueError(f"Opcode {opcode} not found")
-            plugin = self.plugins.get(opcodedef.plugin)
-            if not plugin:
-                raise RuntimeError(f"The opcode {opcode} is defined in plugin {opcodedef.plugin}"
-                                   f", but the plugin was not found")
-            return plugin.manpage(opcode)
+            for plugin in self.plugins.values():
+                if opcode in plugin.opcodes:
+                    return plugin.manpage(opcode)
+            _errormsg(f"Opcode {opcode} not found")
 
     def installed_plugin_info(self, plugin: Plugin) -> Optional[InstalledPluginInfo]:
         """
@@ -1366,9 +1406,10 @@ class MainIndex:
             pluginkey = manifest.name.split(".")[0]
             name, version = _parse_pluginkey(pluginkey)
             if name == plugin.name:
-                result = _load_manifest(manifest.as_posix())
-                if isinstance(result, ErrorMsg):
-                    _errormsg(str(result))
+                try:
+                    result = _load_installation_manifest(manifest)
+                except Exception as e:
+                    _errormsg(f"Could not load installation manifest for plugin {plugin.name}, skipping")
                     continue
                 installed_version = result['version']
                 installed_manifest_path = manifest
@@ -1459,19 +1500,44 @@ class MainIndex:
         return {opcode.name: opcode
                 for opcode in opcodes}
 
-    def defined_opcodes(self, installed=False) -> List[Opcode]:
+    def opcode_syntaxes(self, opcode: str) -> List[str]:
+        manpage = self.find_manpage(opcode, markdown=True)
+        if not manpage:
+            _errormsg(f"Opcode {opcode} has no manpage")
+            return []
+        text = open(manpage).read()
+        lines = iter(text.splitlines())
+        syntaxlines = []
+        for line in lines:
+            if re.search(r"^\s*#+\s+[s|S]yntax\s*$", line):
+                break
+        else:
+            return []
+        for line in lines:
+            if re.search(r"^\s*[#!;/]", line):
+                break
+            elif opcode in line and (re.search(r"^\s*[akigS\[x]", line) or line.lstrip().startswith(opcode)):
+                syntax = line.strip().split(";", maxsplit=1)[0]
+                syntaxlines.append(syntax)
+        return syntaxlines
+
+    def defined_opcodes(self) -> List[Opcode]:
         """
         Returns a list of opcodes
 
-        Args:
-            installed: only opcodes which are installed are returned
         """
+        cached = self._cache.get('opcodes')
+        if cached:
+            return cached
         opcodes = []
         for plugin in self.plugins.values():
-            if installed and not self.is_plugin_installed(plugin):
-                continue
+            pluginstalled = self.is_plugin_installed(plugin)
+            print(plugin.opcodes)
             for opcodename in plugin.opcodes:
-                opcodes.append(Opcode(name=opcodename, plugin=plugin.name))
+                print("querying ", opcodename)
+                opcodes.append(Opcode(name=opcodename, plugin=plugin.name, syntaxes=self.opcode_syntaxes(opcodename),
+                                      installed=pluginstalled))
+        self._cache['opcodes'] = opcodes
         return opcodes
 
     def match_opcodes(self, globpattern: str, installed=False) -> List[Opcode]:
@@ -1532,28 +1598,27 @@ class MainIndex:
                                 f"{plugin.opcodes[0]}, which is provided by this plugin, "
                                 f"is not present")
 
+        # Install assets, if any
+        assetfiles = []
+        if plugin.assets:
+            for asset in plugin.assets:
+                if asset.platform == 'all' or asset.platform == platform:
+                    _debug(f"Installing asset {asset.identifier()}")
+                    assetfiles.extend(self.install_asset(asset, plugin.name))
+
         # install manifest
-        manifests_path = self.installed_manifests_path()
-        if not manifests_path.exists():
-            manifests_path.mkdir(parents=True)
-        manifest = _make_install_manifest(plugin, platform=platform)
-        manifest_path = manifests_path / f"{plugin.name}.json"
+        manifest_path = self.installed_manifests_path() / f"{plugin.name}.json"
+        manifest = _make_install_manifest(plugin, assetfiles=assetfiles)
         try:
             manifest_json = json.dumps(manifest, indent=True)
         except Exception as e:
-            _errormsg("install_plugin: json error while saving manifest: " + str(e))
+            _errormsg(f"install_plugin: json error while saving manifest: {e}")
+            _errormsg(f"   manifest was: \n{manifest}")
             return ErrorMsg("Error when dumping manifest to json")
 
         with open(manifest_path.as_posix(), "w") as f:
             f.write(manifest_json)
         _debug(f"Saved manifest for plugin {plugin.name} to {manifest_path}")
-
-        # Install assets, if any
-        if plugin.assets:
-            for asset in plugin.assets:
-                if asset.platform == 'all' or asset.platform == platform:
-                    _debug(f"Installing asset {asset.identifier()}")
-                    self.install_asset(asset, plugin.name)
 
         # no errors
         return None
@@ -1590,7 +1655,7 @@ class MainIndex:
     def list_plugins(self, installed=False, nameonly=False, allplatforms=False,
                      leftcolwidth=20, oneline=False):
         platform = _get_platform()
-        descr_max_width = 60
+        descr_max_width = os.get_terminal_size().columns - 36
         for plugin in self.plugins.values():
             data = []
             if platform not in plugin.binaries.keys():
@@ -1609,7 +1674,7 @@ class MainIndex:
             extra_lines = []
             if info:
                 if info.versionstr == UNKNOWN_VERSION:
-                    data.append("installed (manually)")
+                    data.append("manual")
                 else:
                     if oneline:
                         data.append(info.versionstr)
@@ -1621,7 +1686,7 @@ class MainIndex:
                 status = "[" + ", ".join(data) + "]"
             else:
                 status = ""
-            leftcol = f"{plugin.name}  @ {plugin.version}"
+            leftcol = f"{plugin.name} /{plugin.version}"
             descr = plugin.short_description
             if oneline and len(descr) > descr_max_width:
                 descr = descr[:descr_max_width] + "…"
@@ -1671,13 +1736,13 @@ class MainIndex:
             print("Assets:")
             for asset in plugdef.assets:
                 print(f"    * identifier: {_abbrev(asset.identifier(), 70)}\n"
-                      f"      url: {asset.url}\n"
-                      f"      paths: {', '.join(asset.patterns)}\n"
+                      f"      source: {asset.source}\n"
+                      f"      patterns: {', '.join(asset.patterns)}\n"
                       f"      platform: {asset.platform}")
         print()
         return True
 
-    def uninstall_plugin(self, plugin: Plugin) -> None:
+    def uninstall_plugin(self, plugin: Plugin, removeassets=True) -> None:
         """
         Uninstall the given plugin
 
@@ -1687,6 +1752,10 @@ class MainIndex:
 
         Raises RuntimeError if the plugin is not installed or is installed
         in the system's folder.
+
+        Args:
+            plugin: the plugin to uninstall
+            removeassets: if True, removes the assets installed by this plugin
         """
         info = self.installed_plugin_info(plugin)
         if not info:
@@ -1700,7 +1769,21 @@ class MainIndex:
         os.remove(info.dllpath.as_posix())
         assert not info.dllpath.exists(), f"Attempted to remove {info.dllpath.as_posix()}, but failed"
         manifestpath = info.installed_manifest_path
+        assetsfolder = RISSET_ASSETS_PATH / plugin.name
         if manifestpath and manifestpath.exists():
+            installed_manifest = _load_installation_manifest(manifestpath)
+            assetfiles = installed_manifest.get('assetfiles', [])
+            if removeassets and assetsfolder.exists():
+                _debug(f"Removing assets for plugin {plugin.name}: {assetfiles}")
+                for assetfile in assetfiles:
+                    assetfullpath = assetsfolder / assetfile
+                    if assetfullpath.exists():
+                        os.remove(assetfullpath)
+                remainingassets = list(assetsfolder.glob("*"))
+                if remainingassets:
+                    _info(f"There are remaining assets in the folder {assetsfolder}: {remainingassets}")
+                    _info("... They will be removed")
+                _rm_dir(assetsfolder)
             os.remove(manifestpath.as_posix())
 
     def install_asset(self, asset: Asset, prefix: str) -> List[str]:
@@ -1726,6 +1809,27 @@ class MainIndex:
             else:
                 shutil.copy(source, destination_folder)
         return [f.name for f in sources]
+
+    def generate_opcodes_xml(self) -> str:
+        """
+        Generates xml following the scheme of the manual's opcodes.xml
+
+        This can be used by frontends to generate help for all csound opcodes
+        """
+        lines =  []
+        _ = lines.append
+        _('<?xml version="1.0" encoding="UTF-8"?>')
+        _('<opcodes>')
+        # For now, gather all opcodes belonging to one plugin under the same category. Later we can
+        # enforce that each plugin defines a category in their manpage
+        for plugin in self.plugins.values():
+            _(f'<category name="External Plugin:{plugin.name}')
+            for opcode in plugin.opcodes:
+                pass
+            _('</category')
+
+        _('</opcodes>')
+
 
 
 ###############################################################
@@ -1906,7 +2010,6 @@ def cmd_list(mainindex: MainIndex, args) -> None:
     """
     Lists all plugins available for download
     """
-    # TODO: implement flags: --json, --output
     if args.json:
         d = mainindex._list_plugins_as_dict(installed=args.installed, allplatforms=args.all)
         if args.outfile:
@@ -2078,8 +2181,9 @@ def update_self():
 def cmd_list_installed_opcodes(plugins_index: MainIndex, args) -> bool:
     """
     Print a list of installed opcodes
+
     """
-    opcodes = plugins_index.defined_opcodes(installed=True)
+    opcodes = plugins_index.defined_opcodes()
     opcodes.sort(key=lambda opcode: opcode.name.lower())
     for opcode in opcodes:
         print(opcode.name)
