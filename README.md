@@ -46,17 +46,22 @@ $ risset install else jsfx
 
 $ risset show poly
 
-Plugin     : poly
-Installed  : not installed
-Abstract   : Run multiple copies of an opcode in parallel/series
-Minimal csound version : 6.14
-Author     : Eduardo Moguillansky
-Platforms  :
-    * linux: Ubuntu 16.04
+Plugin        : poly
+Author        : Eduardo Moguillansky (eduardo.moguillansky@gmail.com)
+URL           : https://github.com/csound-plugins/csound-plugins.git
+Version       : 1.10.0
+Csound version: >= 6.14
+Installed     : 1.10.0 (path: /home/xx/.local/lib/csound/6.0/plugins64/libpoly.so)
+Manifest      : /home/xx/.local/share/risset/installed-manifests/poly.json
+Abstract      : Multiple (parallel or sequential) instances of an opcode
+Description:
+    Multiple (parallel or sequential) instances of an opcode
+Platforms:
+    * linux: Ubuntu 18.04
     * macos: 10.14.0
     * windows: Windows 10
-Opcodes    :
-             poly, polyseq, poly0
+Opcodes:
+    defer, poly, poly0, polyseq
 
 # Remove a plugin
 
