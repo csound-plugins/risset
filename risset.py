@@ -19,7 +19,8 @@ import shutil
 import subprocess
 import textwrap
 import fnmatch
-from urllib.parse import urlparse
+
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from zipfile import ZipFile
@@ -29,7 +30,6 @@ import re
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import List, Dict, Tuple, Union, Optional, Any
-
 
 
 INDEX_GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
@@ -873,7 +873,7 @@ def _is_url(s: str) -> bool:
     Args:
         s: URL address string to validate
     """
-    result = urlparse(str(s))
+    result = urllib.parse.urlparse(str(s))
     return bool(result.scheme and result.netloc)
 
 
@@ -1292,7 +1292,7 @@ class MainIndex:
         """
         Update all sources and reread the index
         """
-        self._parse_index(updateindex=True, updateplugins=True, fail_if_error=register.debug)
+        self._parse_index(updateindex=True, updateplugins=True, fail_when_debugging=register.debug)
 
     def build_documentation(self, dest: Path = None, buildhtml=True,  onlyinstalled=False) -> Path:
         """
@@ -1650,7 +1650,7 @@ class MainIndex:
         # no errors
         return None
 
-    def _list_plugins_as_dict(self, installed=False, allplatforms=False) -> dict:
+    def list_plugins_as_dict(self, installed=False, allplatforms=False) -> dict:
         d = {}
         platform = _get_platform()
         for plugin in self.plugins.values():
@@ -1935,24 +1935,27 @@ def _generate_documentation(index: MainIndex, dest: Path = None,
         onlyinstalled: if True, only generate docs for installed plugins
         opcodesxml: if given, generate an opcodes.xml compatible file with the opcodes syntax and
             description and saves it at the given path
+
+    Raises RuntimeExce
     """
     if dest is None:
         dest = RISSET_GENERATED_DOCS
     _compile_docs(index=index, dest=dest / "docs", makeindex=True,
                   onlyinstalled=onlyinstalled)
-    mkdocsconfig = RISSET_DATAREPO_LOCALPATH / "assets" / "mkdocs.yml"
-    if mkdocsconfig.exists():
-        shutil.copy(mkdocsconfig, dest)
-        if buildhtml:
-            if _is_mkdocs_installed():
-                _call_mkdocs(dest, "build")
-            else:
-                _info("mkdocs is needed to build the html documentation")
-    else:
-        _errormsg(f"Did not find mkdocs configuration file. Searched: {mkdocsconfig}")
+
     if opcodesxml:
         xmlstr = index.generate_opcodes_xml()
         open(opcodesxml, "w").write(xmlstr)
+
+    if buildhtml:
+        mkdocsconfig = RISSET_DATAREPO_LOCALPATH / "assets" / "mkdocs.yml"
+        if not mkdocsconfig.exists():
+            raise IOError(f"Did not find mkdocs configuration file. Searched: {mkdocsconfig}")
+        if not _is_mkdocs_installed():
+            raise RuntimeError("mkdocs is needed to build the html documentation")
+        shutil.copy(mkdocsconfig, dest)
+        _call_mkdocs(dest, "build")
+
     return dest
 
 
@@ -2110,7 +2113,7 @@ def cmd_list(mainindex: MainIndex, args) -> None:
     Lists all plugins available for download
     """
     if args.json:
-        d = mainindex._list_plugins_as_dict(installed=args.installed, allplatforms=args.all)
+        d = mainindex.list_plugins_as_dict(installed=args.installed, allplatforms=args.all)
         if args.outfile:
             with open(args.outfile, "w") as f:
                 json.dump(d, f, indent=2)
@@ -2313,8 +2316,13 @@ def cmd_makedocs(idx: MainIndex, args) -> bool:
     outfolder = args.outfolder or RISSET_GENERATED_DOCS
     opcodesxmlpath = RISSET_ROOT / "opcodes.xml"
 
-    _generate_documentation(idx, dest=Path(outfolder), buildhtml=True, onlyinstalled=args.onlyinstalled,
-                            opcodesxml=opcodesxmlpath)
+    try:
+        _generate_documentation(idx, dest=Path(outfolder), buildhtml=True, onlyinstalled=args.onlyinstalled,
+                                opcodesxml=opcodesxmlpath)
+    except Exception as e:
+        _errormsg(str(e))
+        return False
+
     _info(f"Documentation generated in {outfolder}")
     _info(f"Saved opcodes.xml to {opcodesxmlpath}")
     return True
@@ -2340,6 +2348,8 @@ def cmd_info(idx: MainIndex, args) -> bool:
         'installed-plugins': [plugin.name for plugin in idx.plugins.values()
                               if idx.is_plugin_installed(plugin, check=False)]
     }
+    if args.full:
+        d['plugins'] = idx.list_plugins_as_dict()
     jsonstr = json.dumps(d, indent=True)
     if args.outfile:
         open(args.outfile, "w").write(jsonstr)
@@ -2476,6 +2486,7 @@ def main():
     # info
     info_cmd = subparsers.add_parser("info", help="Outputs information about risset itself in json format")
     info_cmd.add_argument("--outfile", default=None, help="Save output to this path")
+    info_cmd.add_argument("--full", action="store_true", help="Include all available information")
     info_cmd.set_defaults(func=cmd_info)
 
     # dev

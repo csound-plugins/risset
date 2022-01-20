@@ -31,11 +31,24 @@ These commands will install the script "risset" into your path.
 # list all defined packages
 $ risset list
 
-* else  @ 0.2.0        | Miscellaneous plugins
-* poly  @ 0.2.0        | Run multiple copies of an opcode in parallel/series
-* klib  @ 0.2.0        | hashtable / pool / string cache plugins [installed 0.2.0]
-* jsfx  @ 0.2.0        | Jesusonics effects in csound
-* mverb @ 1.3.7        | Artificial reverb based on a 2D waveguide mesh
+* else /1.10.0         | Miscellaneous plugins [installed: 1.10.0]
+                       |    Path: /home/xx/.local/lib/csound/6.0/plugins64/libelse.so
+* pathtools /1.10.0    | Cross-platform path handling and string opcodes [installed: 1.10.0]
+                       |    Path: /home/xx/.local/lib/csound/6.0/plugins64/libpathtools.so
+* klib /1.10.0         | A hashtable for csound [installed: 1.10.0]
+                       |    Path: /home/xx/.local/lib/csound/6.0/plugins64/libklib.so
+* beosc /1.10.0        | Band-enhanced oscillators implementing the sine+noise synthesis model [installed: 1.10.0]
+                       |    Path: /home/xx/.local/lib/csound/6.0/plugins64/libbeosc.so
+* jsfx /1.10.0         | jsfx support for csound [installed: 1.10.0]
+                       |    Path: /home/xx/.local/lib/csound/6.0/plugins64/libjsfx.so
+* poly /1.10.0         | Multiple (parallel or sequential) instances of an opcode [installed: 1.10.0]
+                       |    Path: /home/xx/.local/lib/csound/6.0/plugins64/libpoly.so
+- sndmeta /1.10.0      | opcodes using libsndfile
+* risset /1.10.0       | Cross-platform path handling and string opcodes [manual]
+                       |    Path: /home/xx/.local/lib/csound/6.0/plugins64/librisset.so
+* vst3 /0.3.0          | Host vst3 plugins in csound [manual]
+                       |    Path: /home/xx/.local/lib/csound/6.0/plugins64/libvst3_plugins.so
+
 
 # Install some packages
 
@@ -63,6 +76,7 @@ Platforms:
 Opcodes:
     defer, poly, poly0, polyseq
 
+    
 # Remove a plugin
 
 $ risset remove poly
@@ -113,17 +127,17 @@ Remove an installed plugin
 
 #### documentation
 
-Open man page in default browser
+Open man page as markdown in the command line
 
     $ risset man <opcode>
 
-Get the path to the .html man page
+Open the html man page in the default browser:
 
-    $ risset man --path <opcode>
+    $ risset man --html <opcode>
 
-The same, but get the path to the markdown man page
+Generate/update documentation:
 
-    $ risset man --path --markdown <opcode>
+    $ risset makedocs
 
 
 # Plugin Documentation
@@ -136,12 +150,12 @@ Documentation for all plugins can be found here: https://csound-plugins.github.i
 
 If installed via `pip`, do:
 
-    pip3 install risset -U
+    pip install risset -U
 
 If installed via `git`, go to the repository and do:
 
     git pull
-    python3 setup.py install
+    python setup.py install
 
 
 -----
@@ -150,19 +164,37 @@ If installed via `git`, go to the repository and do:
 
 In order to add/modify a plugin, clone [risset-data](https://github.com/csound-plugins/risset-data)
 
-At the root of the repository there is an index file `plugins.json`, listing all available
+At the root of the repository there is an index file `rissetindex.json`, listing all available
 plugins. Each entry in the index has the form
 
 ```json
 {
+    "version": "1.0.0",
     "plugins": {
-        "myplugin@1.0.0": "plugins/<collection>/<version>/manifests/myplugin.json",
-        "..." : "..."
+        "else": {
+            "url": "https://github.com/csound-plugins/csound-plugins.git",
+            "path": "src/else"
+        },
+        "pathtools": {
+            "url": "https://github.com/csound-plugins/csound-plugins.git",
+            "path": "src/pathtools"
+        },
+        "klib": {
+            "url": "https://github.com/csound-plugins/csound-plugins.git",
+            "path": "src/klib"
+        },
+        "beosc": {
+            "url": "https://github.com/csound-plugins/csound-plugins.git",
+            "path": "src/beosc"
+        },
+        "vst3": {
+            "url": "https://github.com/csound-plugins/vst3-risset.git"
+        }
     }
 }
 ```
 
-The path to the manifest is relative to the plugins.json file inside the git repository.
+The url + optional path points to a risset.json manifest file
 
 ## Manifest
 
@@ -173,40 +205,46 @@ should correspond to the name of the plugin: "myplugin.json"
 
 ```json
 {
-    "name": "name_of_the_plugin",
-    "libname": "name_of_the_shared_library",
-    "version": "major.minor.patch",
-    "short_description": "a short description",
-    "long_description": "a long description",
-    "csound_version": "minimal_csound_version",
-    "binaries": {
-        "linux": {
-            "url": "path_or_url_of_binary",
-            "build_platform": "major.minor.patch",
-            "extra_binaries": ["url1", "url2", "..."]
-        },
-        "macos": {
-            "url": "...",
-            "build_platform": "..."
-        },
-        "windows": "..."
+  "name": "else",
+  "version": "1.10.0",  
+  "opcodes": [
+    "accum",
+    "atstop",
+    "bisect",
+    "crackle",
+	...
+  ],
+  "short_description": "Miscellaneous plugins",
+  "long_description": "Collection of miscellaneous plugins",
+  "csound_version": "6.16",
+  "author": "Eduardo Moguillansky",
+  "email": "eduardo.moguillansky@gmail.com",
+  "license": "LGPL",
+  "repository": "https://github.com/csound-plugins/csound-plugins",
+  "binaries": {
+    "linux": {
+      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v1.10.0/csound-plugins--linux.zip",
+      "extractpath": "libelse.so",
+      "build_platform": "Ubuntu 18.04"
     },
-    "doc": "rel/path/to/docfolder",
-    "opcodes": ["foo", "bar", "baz"],
-    "author": "Plugin Author",
-    "email": "author@email.org",
-    "repository": "https://url/to/were/the/source/is/developed"
+    "macos": {
+      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v1.10.0/csound-plugins--macos.zip",
+	  "extractpath": "libelse.dylib",
+      "build_platform": "10.14.0"
+    },
+    "windows": {
+      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v1.10.0/csound-plugins--win64.zip",
+	  "extractpath": "libelse.dll",
+      "build_platform": "Windows 10"
+    }
+  }
 }
+
 ```
 
 #### Explanation of each term
 
-In general, each field holding a url can be either a link or a path relative to
-the manifest itself.
-
-* `name`: name of the plugin. For example, "chaoticoscils". This name must be unique
-* `libname`: the name of the shared library, without extension (example: `libchaoticoscils`).
-    This is used to check if the plugin is installed.
+* `name`: name of the plugin. This name must be unique
 * `version`: a version string indicating the version of these binaries. The version
     should have the form "MAYOR.MINOR.PATCH" or "MAJOR.MINOR", where each term is
     an integer
@@ -216,24 +254,17 @@ the manifest itself.
     Example "6.14.0" (a string)
 * `binaries`: A dictionary with platforms as keys. Possible platforms: "linux", "macos", "windows".
     The value for each entry should be itself a dictionary of the form:
-    * `url`: the path to the shared binary itself (relative to the manifest), or
-    a downloadable url pointing to the shared library. At the moment only path are supported
-    * `extra_binaries`: an **optional** field holding an array of other binaries needed
+    * `url`: the url where to download the plugin. Can point to a zip file.
+    * `extractpath`: for the case when the url points to a compressed file, this field indicates
+    	whcat should be extracted from the compressed file
     * `build_platform`: a string identifying the platform used to build the binary
-* `doc`: (optional) A relative path to the folder holding the man pages for the opcodes.
-    Defaults to a folder named "doc" besides the manifest file
 * `opcodes`: A list of all opcodes included in this plugin (for documentation purposes)
 * `author`: The name of the author / mainteiner
 * `email`: email of the author / mainteiner
-* `repository`: the URL were the source code for this plugin is hosted
+* `repository`: the URL were the source code for this plugin is hosted, for reference
 
 ### Platform support
 
 It is desirable, but not a requirement, that all opcodes support the three major desktop
 platforms: linux, macos and windows. Support for a given platform is indicated by the availability of
 a binary for the given platform in the manifest.json file.
-
-
-## TODO
-
-* subcommand `doc`: show documentation about an opcode inside a plugin
