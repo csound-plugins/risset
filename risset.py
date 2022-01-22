@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 
 import glob
 import sys
