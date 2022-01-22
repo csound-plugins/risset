@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "1.2.3"
+__version__ = "1.2.4"
 
 import glob
 import sys
@@ -44,7 +44,7 @@ class _Register:
             'darwin': 'macos',
             'win32': 'windows'
         }[sys.platform]
-        self.system_plugins_path: Optional[Path] = None
+        self.system_plugins_path: Optional[Path] = _system_plugins_path()
         self.debug = False
         self.cache = {}
 
@@ -515,24 +515,29 @@ def _main_repository_path() -> Path:
     return RISSET_ROOT / "risset-data"
 
 
-def user_plugins_path() -> Path:
+def user_plugins_path(ensure=False) -> Path:
     """
     Return the install path for user plugins
 
     This returns the default path or the value of $CS_USER_PLUGINDIR. The env
     variable has priority.
+
+    Args:
+        ensure: makes sure that the returned path exists
     """
     cs_user_plugindir = os.getenv("CS_USER_PLUGINDIR")
     if cs_user_plugindir:
-        return Path(cs_user_plugindir)
-
-    pluginsdir = {
-        'linux': '$HOME/.local/lib/csound/6.0/plugins64',
-        'win32': 'C:\\Users\\$USERNAME\\AppData\\Local\\csound\\6.0\\plugins64',
-        'darwin': '$HOME/Library/csound/6.0/plugins64'
-    }[sys.platform]
-    return Path(os.path.expandvars(pluginsdir))
-
+        out = Path(cs_user_plugindir)
+    else:
+        pluginsdir = {
+            'linux': '$HOME/.local/lib/csound/6.0/plugins64',
+            'win32': 'C:\\Users\\$USERNAME\\AppData\\Local\\csound\\6.0\\plugins64',
+            'darwin': '$HOME/Library/csound/6.0/plugins64'
+        }[sys.platform]
+        out = Path(os.path.expandvars(pluginsdir))
+    if ensure and not out.exists():
+        out.mkdir(parents=True)
+    return out
 
 def _csound_version() -> Tuple[int, int]:
     csound_bin = _get_binary("csound")
@@ -1128,10 +1133,19 @@ def _download_file(url: str, cache=True) -> Path:
     return path
 
 
+def _is_arm64():
+    return os.uname()[4].startswith("arm")
+
+
 def default_system_plugins_path() -> List[Path]:
     platform = _get_platform()
+
     if platform == 'linux':
         possible_dirs = ["/usr/local/lib/csound/plugins64-6.0", "/usr/lib/csound/plugins64-6.0"]
+        if _is_arm64():
+            # This is where debian in raspberry pi installs csound's plugins
+            # https://packages.debian.org/bullseye/armhf/libcsound64-6.0/filelist
+            possible_dirs.append("/usr/lib/arm-linux-gnueabihf/csound/plugins64-6.0/")
     elif platform == 'macos':
         # The path based on ~ is used when csound is compiled from source.
         # We give that priority since if a user is doing that, it is probably someone who knows
@@ -1154,12 +1168,14 @@ def default_system_plugins_path() -> List[Path]:
 
 
 def system_plugins_path() -> Optional[Path]:
+    return register.system_plugins_path
+
+
+def _system_plugins_path() -> Optional[Path]:
     """
     Get the path were system plugins are installed.
     """
     # first check if the user has set OPCODE6DIR64
-    if register.system_plugins_path is not None:
-        return register.system_plugins_path
     opcode6dir64 = os.getenv("OPCODE6DIR64")
     if opcode6dir64:
         possible_paths = [Path(p) for p in opcode6dir64.split(_get_path_separator())]
@@ -1171,7 +1187,6 @@ def system_plugins_path() -> Optional[Path]:
         _errormsg(f"System plugins path not found! Searched paths: {possible_paths}")
         return None
     assert out.exists() and out.is_dir() and out.is_absolute()
-    register.system_plugins_path = out
     return out
 
 
@@ -1232,6 +1247,7 @@ class MainIndex:
         self.plugins: Dict[str, Plugin] = {}
         self._cache: Dict[str, Any] = {}
         self._parse_index(updateindex=updateindex, updateplugins=update)
+        self.user_plugins_path = user_plugins_path()
         if update:
             self.serialize()
 
@@ -1609,7 +1625,8 @@ class MainIndex:
         except SchemaError as e:
             return ErrorMsg(f"The plugin definition for {plugin.name} has errors: {e}")
 
-        installpath = user_plugins_path()
+        installpath = user_plugins_path(ensure=True)
+        _debug("User plugins path: ", installpath)
         try:
             shutil.copy(pluginpath.as_posix(), installpath.as_posix())
         except IOError as e:
