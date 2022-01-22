@@ -830,21 +830,21 @@ def _find_system_plugins_path(possible_paths: List[Path]) -> Optional[Path]:
         dll = "libarrayops" + ext
 
     for d in possible_paths:
-        _debug("  >> looking at ", d)
+        _debug(">> looking at ", d)
         path = d.expanduser().resolve()
         if not path.is_dir() or not path.exists():
-            _debug("  >>> path does not exist...")
+            _debug(">>> path does not exist...")
             continue
         plugins = list(path.glob("*" + ext))
         if not plugins:
-            _debug(f"  >>> path {d} exists, but has no plugins, skipping")
-            continue
-        if any(plugin for plugin in plugins if dll == plugin.name):
-            _debug("  >>> Found!")
+            _debug(f">>> path {d} exists, but has no plugins, skipping")
+        elif any(plugin for plugin in plugins if dll == plugin.name):
+            _debug(">>> Found!")
             return path
-        _debug(f"Found plugins dir {d}, but it does not seem to be the systems plugin path"
-              f"  ({dll} was not found there)")
-        _debug("Plugins found here: ", str(plugins))
+        else:
+            _debug(f">>> Path exists, but it does not seem to be the systems plugin path\n"
+                   f">>> ({dll} was not found there)")
+            _debug( ">>> Plugins found here: ", ', '.join(plugin.name for plugin in plugins))
     return None
 
 
@@ -1138,9 +1138,13 @@ def default_system_plugins_path() -> List[Path]:
         # what she is doing
         MAC_CSOUNDLIB = 'CsoundLib64'
         API_VERSION = '6.0'
+        HOME = os.getenv("HOME")
         possible_dirs = [
-            f"~/Library/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
+            f"{HOME}/Library/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
             f"/Library/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
+            f"/usr/local/opt/csound/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
+            "/usr/local/lib/csound/plugins64-6.0", 
+            "/usr/lib/csound/plugins64-6.0"
         ]
     elif platform == "windows":
         possible_dirs = ["C:\\Program Files\\Csound6_x64\\plugins64"]
@@ -1609,6 +1613,7 @@ class MainIndex:
         try:
             shutil.copy(pluginpath.as_posix(), installpath.as_posix())
         except IOError as e:
+            _debug(f"Tried to copy {pluginpath.as_posix()} to {installpath.as_posix()} but failed")
             _debug(str(e))
             return ErrorMsg("Could not copy the binary to the install path")
 
