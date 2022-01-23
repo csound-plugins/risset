@@ -35,6 +35,9 @@ if TYPE_CHECKING:
 INDEX_GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
 
+_UNSET = object()
+
+
 class _Register:
     def __init__(self):
         self.downloaded_files: Dict[str, Path] = {}
@@ -44,7 +47,6 @@ class _Register:
             'darwin': 'macos',
             'win32': 'windows'
         }[sys.platform]
-        self.system_plugins_path: Optional[Path] = _system_plugins_path()
         self.debug = False
         self.cache = {}
 
@@ -80,7 +82,7 @@ def _data_dir_for_platform() -> Path:
     if platform == 'linux':
         return Path(os.path.expanduser("~/.local/share"))
     elif platform == 'darwin':
-        return Path(os.path.expanduser("~/Libary/Application Support"))
+        return Path(os.path.expanduser("~/Library/Application Support"))
     elif platform == 'win32':
         p = R"C:\Users\$USERNAME\AppData\Local"
         return Path(os.path.expandvars(p))
@@ -515,15 +517,12 @@ def _main_repository_path() -> Path:
     return RISSET_ROOT / "risset-data"
 
 
-def user_plugins_path(ensure=False) -> Path:
+def user_plugins_path() -> Path:
     """
     Return the install path for user plugins
 
     This returns the default path or the value of $CS_USER_PLUGINDIR. The env
-    variable has priority.
-
-    Args:
-        ensure: makes sure that the returned path exists
+    variable has priority
     """
     cs_user_plugindir = os.getenv("CS_USER_PLUGINDIR")
     if cs_user_plugindir:
@@ -535,8 +534,6 @@ def user_plugins_path(ensure=False) -> Path:
             'darwin': '$HOME/Library/csound/6.0/plugins64'
         }[sys.platform]
         out = Path(os.path.expandvars(pluginsdir))
-    if ensure and not out.exists():
-        out.mkdir(parents=True)
     return out
 
 def _csound_version() -> Tuple[int, int]:
@@ -1154,10 +1151,10 @@ def default_system_plugins_path() -> List[Path]:
         API_VERSION = '6.0'
         HOME = os.getenv("HOME")
         possible_dirs = [
+            f"/usr/local/opt/csound/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
             f"{HOME}/Library/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
             f"/Library/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
-            f"/usr/local/opt/csound/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
-            "/usr/local/lib/csound/plugins64-6.0", 
+            "/usr/local/lib/csound/plugins64-6.0",
             "/usr/lib/csound/plugins64-6.0"
         ]
     elif platform == "windows":
@@ -1168,13 +1165,16 @@ def default_system_plugins_path() -> List[Path]:
 
 
 def system_plugins_path() -> Optional[Path]:
-    return register.system_plugins_path
-
-
-def _system_plugins_path() -> Optional[Path]:
     """
     Get the path were system plugins are installed.
     """
+    if (out:=register.cache.get('system_plugins_path', _UNSET)) is not _UNSET:
+        return out
+    register.cache['system_plugins_path'] = out = _system_plugins_path()
+    return out
+
+
+def _system_plugins_path() -> Optional[Path]:
     # first check if the user has set OPCODE6DIR64
     opcode6dir64 = os.getenv("OPCODE6DIR64")
     if opcode6dir64:
@@ -1190,11 +1190,13 @@ def _system_plugins_path() -> Optional[Path]:
     return out
 
 
+
+
 def user_installed_dlls() -> List[Path]:
     """
     Return a list of plugins installed at the user plugin path.
     """
-    if cached:=register.cache.get('user_installed_dlls'):
+    if (cached:=register.cache.get('user_installed_dlls', _UNSET)) is not _UNSET:
         return cached
     path = user_plugins_path()
     if not path or not path.exists():
@@ -1625,7 +1627,9 @@ class MainIndex:
         except SchemaError as e:
             return ErrorMsg(f"The plugin definition for {plugin.name} has errors: {e}")
 
-        installpath = user_plugins_path(ensure=True)
+        installpath = user_plugins_path()
+        if not installpath.exists():
+            installpath.mkdir(parents=True, exist_ok=True)
         _debug("User plugins path: ", installpath)
         try:
             shutil.copy(pluginpath.as_posix(), installpath.as_posix())
@@ -2410,6 +2414,7 @@ def _show_markdown_file(path: Path, style='dark') -> None:
 
     print(highlight(code, MarkdownLexer(), TerminalTrueColorFormatter(style=style)))
     # print(highlight(code, MarkdownLexer(), TerminalFormatter()))
+
 
 
 def main():
