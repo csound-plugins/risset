@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "1.2.5"
+__version__ = "1.3.0"
 
 import glob
 import sys
@@ -19,13 +19,16 @@ import shutil
 import subprocess
 import textwrap
 import fnmatch
+import pprint
 
 import urllib.parse
 import urllib.request
+import urllib.error
 from pathlib import Path
 from zipfile import ZipFile
 import inspect as _inspect
 import re
+from string import Template as _Template
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -62,6 +65,17 @@ def _get_platform() -> str:
     """
     # TODO: add support for arm linux (raspi, etc.)
     return register.platform
+
+
+def _termsize(width=80, height=25) -> Tuple[int, int]:
+    if not sys.stdout.isatty():
+        return width, height
+
+    try:
+        t = os.get_terminal_size()
+        return t.columns, t.lines
+    except:
+        return width, height
 
 
 def _abbrev(s: str, maxlen: int) -> str:
@@ -155,12 +169,11 @@ def _is_git_url(url: str) -> bool:
     return _is_url(url) and url.endswith(".git")
 
 
-def _debug(*msgs) -> None:
+def _debug(*msgs, ljust=20) -> None:
     """ Print debug info only if debugging is turned on """
     if register.debug:
-        l = 28
-        caller = _abbrev(_inspect.stack()[1][3], l)
-        print(f"DEBUG:{caller.ljust(l)}:", *msgs, file=sys.stderr)
+        caller = _abbrev(_inspect.stack()[1][3], ljust)
+        print(f"DEBUG:{caller.ljust(ljust)}:", *msgs, file=sys.stderr)
 
 
 def _errormsg(msg: str) -> None:
@@ -412,6 +425,13 @@ class Plugin:
     def __hash__(self):
         return hash((self.name, self.version))
 
+    @property
+    def versiontuple(self) -> Tuple[int, int, int]:
+        if self.version:
+            return _version_tuple(self.version)
+        return (0, 0, 0)
+
+
     def binary_filename(self, platform: str = None) -> Optional[str]:
         """
         The filename of the binary (a .so, .dll or .dylib file)
@@ -485,7 +505,7 @@ class InstalledPluginInfo:
 
     @property
     def versiontuple(self) -> Tuple[int, int, int]:
-        return _version_tuple(self.versionstr) if self.versionstr else (0, 0, 0)
+        return _version_tuple(self.versionstr) if self.versionstr and self.versionstr != UNKNOWN_VERSION else (0, 0, 0)
 
 
 UNKNOWN_VERSION = "Unknown"
@@ -802,11 +822,11 @@ def _version_tuple(versionstr: str) -> Tuple[int, int, int]:
     """ Convert a version string to its integer parts """
     if not versionstr:
         raise ValueError("versionstr is empty")
-    parts = versionstr.split(".")
+    parts = versionstr.split(".", maxsplit=3)
     try:
         ints = [int(part) for part in parts]
     except ValueError:
-        raise ValueError(f"Could not parse version {versionstr}")
+        raise ValueError(f"Could not parse version '{versionstr}'")
 
     if len(ints) == 1:
         ints += [0, 0]
@@ -902,11 +922,38 @@ def _normalize_version(version: str, default="0.0.0") -> str:
     return ".".join(str(i) for i in versiontup)
 
 
-def _parse_binarydef(platform: str, binarydef: dict) -> Binary:
+def _expand_substitutions(s: str, substitutions: Dict[str, str]) -> str:
+    """
+    Expands variables of the form $var or ${var}
+    """
+    t = _Template(s)
+    return t.substitute(substitutions)
+
+
+def _parse_binarydef(platform: str, binarydef: dict, substitutions: Dict[str, str]) -> Binary:
+    """
+    Parses a binary definition within a risset.json dict
+
+    A binary definition has the form
+
+    "platform": {
+        "url": str,
+        "build_platform": str,
+        "extractpath": str (optional)
+    }
+
+    * url: the url where to download the binary. It can be an url to the binary itself, to a .zip file,
+        or to a git repository
+    * build_platform: the platform where the given binary was built. This serves as reference for
+        a user. For example, in linux a build platform might be "Ubuntu 20.04"
+    * extractpath: if the case where the url does not point to a binary, extractpath should be used
+        to indicate the location of the binary within the .zip file or within the git repository
+    """
     assert isinstance(binarydef, dict)
     url = binarydef.get('url')
     if not url:
         raise ParseError(f"Plugin definition for {platform} should have an url")
+    url = _expand_substitutions(url, substitutions)
     build_platform = binarydef.get('build_platform')
     if not build_platform:
         raise ParseError(f"Plugin definition for {platform} should have a build_platform")
@@ -942,11 +989,12 @@ def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
     pluginname = _enforce_key(d, 'name')
     opcodes = _enforce_key(d, 'opcodes')
     opcodes.sort()
+    substitutions = {key: str(value) for key, value in d.items() if isinstance(value, (int, float, str))}
 
     binaries: Dict[str, Binary] = {}
     for platform, binarydef in _enforce_key(d, 'binaries').items():
         try:
-            binary = _parse_binarydef(platform, binarydef)
+            binary = _parse_binarydef(platform, binarydef, substitutions=substitutions)
             binaries[binary.platform] = binary
         except ParseError as e:
             _errormsg(f"Failed to parse binary definition for plugin {d.get('name', '??')}")
@@ -1120,7 +1168,13 @@ def _download_file(url: str, cache=True) -> Path:
     path = register.downloaded_files.get(url)
     if path is not None and cache:
         return path
-    tmpfile, httpmsg = urllib.request.urlretrieve(url)
+    _debug("Downloading url", url)
+    try:
+        tmpfile, httpmsg = urllib.request.urlretrieve(url)
+    except urllib.error.HTTPError as err:
+        _errormsg(f"Error while trying to download url: {url}")
+        raise err
+
     if not os.path.exists(tmpfile):
         raise RuntimeError(f"Error downloading file {url}")
     baseoutfile = os.path.split(url)[1]
@@ -1188,8 +1242,6 @@ def _system_plugins_path() -> Optional[Path]:
         return None
     assert out.exists() and out.is_dir() and out.is_absolute()
     return out
-
-
 
 
 def user_installed_dlls() -> List[Path]:
@@ -1355,8 +1407,9 @@ class MainIndex:
         return pluginsource.read_definition()
 
     def installed_dlls(self) -> Dict[str, Tuple[Path, bool]]:
-        if cached:=self._cache.get('installed_dlls'):
-            return cached
+        """
+        Returns a dict mapping dll name to (installed_path: str, user_installed: bool)
+        """
         user_dlls = user_installed_dlls()
         system_dlls = system_installed_dlls()
         db = {}
@@ -1364,7 +1417,6 @@ class MainIndex:
             db[dll.name] = (dll, True)
         for dll in system_dlls:
             db[dll.name] = (dll, False)
-        self._cache['installed_dlls'] = db
         return db
 
     def installed_path_for_dll(self, binary: str) -> Tuple[Optional[Path], bool]:
@@ -1385,6 +1437,10 @@ class MainIndex:
             path, userinstalled = dlldb[binary]
             return path, userinstalled
         else:
+            _debug(f"The binary {binary} could not be found in the installed dlls. Installed dlls:")
+            if register.debug:
+                for dll, (path, userinstalled) in dlldb.items():
+                    print(f" - {dll.ljust(28)}: {path} ", file=sys.stderr)
             return None, False
 
     def installed_manifests_path(self) -> Path:
@@ -1417,6 +1473,19 @@ class MainIndex:
         opcodes = _csound_opcodes()
         return test in opcodes
 
+    def plugin_installed_path(self, plugin: Plugin) -> Optional[Path]:
+        """
+        Returns the path to the plugin's dll
+
+        If the plugin is not installed or the binary is not found
+        returns None
+        """
+        binfile = plugin.binary_filename()
+        if not binfile:
+            return None
+        dll, user_installed = self.installed_path_for_dll(binfile)
+        return dll
+
     def is_plugin_installed(self, plugin: Plugin, check=True) -> bool:
         """
         Is the given plugin installed?
@@ -1433,7 +1502,9 @@ class MainIndex:
         if not binfile:
             return False
         dll, user_installed = self.installed_path_for_dll(binfile)
-        return dll is not None and (not check or self._check_plugin_installed(plugin))
+        if dll is None:
+            return False
+        return True if not check else self._check_plugin_installed(plugin)
 
     def find_manpage(self,
                      opcode: str,
@@ -1630,7 +1701,8 @@ class MainIndex:
         installpath = user_plugins_path()
         if not installpath.exists():
             installpath.mkdir(parents=True, exist_ok=True)
-        _debug("User plugins path: ", installpath)
+        _debug("User plugins path: ", installpath.as_posix())
+        _debug("Downloaded dll for plugin: ", pluginpath.as_posix())
         try:
             shutil.copy(pluginpath.as_posix(), installpath.as_posix())
         except IOError as e:
@@ -1638,14 +1710,19 @@ class MainIndex:
             _debug(str(e))
             return ErrorMsg("Could not copy the binary to the install path")
 
-        if not (installpath / pluginpath).exists():
-            return ErrorMsg(f"Installation of plugin {plugin.name} failed")
+        installed_path = installpath / pluginpath.name
+        if not (installed_path).exists():
+            return ErrorMsg(f"Installation of plugin {plugin.name} failed, binary was not found in the expected path: "
+                            f"{installed_path.as_posix()}")
+
+        register.cache.clear()
 
         # installation succeeded, check that it works
         if not self.is_plugin_installed(plugin, check=check):
+            _debug(f"Plugin {plugin.name} does not seem to be installed")
             if not check:
                 return ErrorMsg(f"Tried to install plugin {plugin.name}, but the binary"
-                                f" is not present")
+                                f" is not present.")
             else:
                 return ErrorMsg(f"Tried to install plugin {plugin.name}, but opcode "
                                 f"{plugin.opcodes[0]}, which is provided by this plugin, "
@@ -1706,9 +1783,15 @@ class MainIndex:
         return d
 
     def list_plugins(self, installed=False, nameonly=False, allplatforms=False,
-                     leftcolwidth=20, oneline=False):
+                     leftcolwidth=20, oneline=False, upgradable=False):
         platform = _get_platform()
-        descr_max_width = os.get_terminal_size().columns - 36
+        width, height = _termsize()
+        descr_max_width = width - 36
+
+        if upgradable:
+            installed = True
+            allplatforms = False
+
         for plugin in self.plugins.values():
             data = []
             if platform not in plugin.binaries.keys():
@@ -1719,11 +1802,18 @@ class MainIndex:
                 data.append("platform not supported")
             info = self.installed_plugin_info(plugin)
             plugininstalled = info is not None
-            if installed and not plugininstalled:
+
+            if not plugininstalled and installed:
                 continue
+
+            if upgradable and (not info or info.versiontuple == (0, 0, 0) or
+                               plugin.versiontuple <= info.versiontuple):
+                continue
+
             if nameonly:
                 print(plugin.name)
                 continue
+
             extra_lines = []
             if info:
                 if info.versionstr == UNKNOWN_VERSION:
@@ -2147,7 +2237,8 @@ def cmd_list(mainindex: MainIndex, args) -> None:
             print(json.dumps(d, indent=2))
     else:
         mainindex.list_plugins(installed=args.installed, nameonly=args.nameonly,
-                               allplatforms=args.all, oneline=args.oneline)
+                               allplatforms=args.all, oneline=args.oneline,
+                               upgradable=args.upgradable)
 
 
 def cmd_show(index: MainIndex, args) -> bool:
@@ -2207,15 +2298,15 @@ def cmd_install(index: MainIndex, args) -> bool:
         plugininfo = index.installed_plugin_info(plugin)
         if not plugininfo:
             # Not installed
-            _debug(f"Plugin {plugin} not installed, installing")
+            _debug(f"Plugin {plugin.name} not installed, installing")
         elif not plugininfo.versionstr or plugininfo.versionstr == UNKNOWN_VERSION:
             # plugin is installed but without a corresponding install manifest.
             if not args.force:
-                _errormsg(f"Plugin {plugin} is already installed. Use --force to force reinstall")
+                _errormsg(f"Plugin {plugin.name} is already installed. Use --force to force reinstall")
                 errors_found = True
                 continue
         else:
-            if _version_tuple(plugin.version) <= plugininfo.versiontuple:
+            if plugin.versiontuple <= plugininfo.versiontuple:
                 _debug(f"Plugin {plugin.name}, version: {plugin.version}")
                 _debug(f"    Installed version: {plugininfo.versionstr}")
                 _info(f"Installed version of plugin {plugin.name} is up-to-date")
@@ -2225,6 +2316,7 @@ def cmd_install(index: MainIndex, args) -> bool:
                  f"{plugininfo.versionstr} -> {plugin.version}")
         error = index.install_plugin(plugin)
         if error:
+            _debug(f"Errors while installing {plugin.name}")
             _errormsg(error)
     return False if errors_found else True
 
@@ -2384,6 +2476,27 @@ def cmd_info(idx: MainIndex, args) -> bool:
     return True
 
 
+def cmd_upgrade(idx: MainIndex, args) -> bool:
+    """ Upgrades all installed packages if they can be upgraded """
+    for plugin in idx.plugins.values():
+        if not idx.is_plugin_installed(plugin):
+            continue
+        info = idx.installed_plugin_info(plugin)
+        if not info or info.versiontuple == (0, 0, 0):
+            _debug(f"Upgrade: plugin {plugin.name} installed manually, will not upgrade")
+        elif plugin.versiontuple <= info.versiontuple:
+            _debug(f"Upgrade: plugin {plugin.name} already up to date"
+                   f" (installed version: {info.versiontuple}, latest version: {plugin.versiontuple}")
+        else:
+            _debug(f"Upgrading plugin {plugin.name} from {info.versiontuple} to {plugin.versiontuple}")
+            err = idx.install_plugin(plugin)
+            if err:
+                _errormsg(f"Error while installing {plugin.name}")
+                _errormsg("    ", str(err))
+
+    return True
+
+
 def _running_from_terminal():
     return sys.stdin.isatty()
 
@@ -2439,17 +2552,19 @@ def main():
 
     # List command
     list_cmd = subparsers.add_parser('list', help="List packages")
+
     flag(list_cmd, "--json", help="Outputs list as json")
     flag(list_cmd, "--all", "List all plugins, even those without a binary for the current platform")
     flag(list_cmd, "--nameonly", help="Output just the name of each plugin")
     flag(list_cmd, "--installed", help="List only installed plugins")
+    flag(list_cmd, "--upgradable", help="List only installed packages which can be upgraded")
     flag(list_cmd, "--notinstalled", help="List only plugins which are not installed")
     list_cmd.add_argument("-o", "--outfile", help="Outputs to a file")
     list_cmd.add_argument("-1", "--oneline", action="store_true", help="List each plugin in one line")
     list_cmd.set_defaults(func=cmd_list)
 
     # Install command
-    install_cmd = subparsers.add_parser("install", help="Install a package")
+    install_cmd = subparsers.add_parser("install", help="Install or update a package")
     flag(install_cmd, "--force", help="Force install/reinstall")
     install_cmd.add_argument("plugins", nargs="+",
                              help="Name of the plugin/plugins to install. "
@@ -2500,7 +2615,8 @@ def main():
     man_cmd.set_defaults(func=cmd_man)
 
     # update command
-    update_cmd = subparsers.add_parser("update", help="Update repository")
+    update_cmd = subparsers.add_parser("update", help="Update repository. Updates the metadata about available"
+                                                      "packages, their versions, etc.")
 
     # list-opcodes
     listopcodes_cmd = subparsers.add_parser("listopcodes", help="List installed opcodes")
@@ -2515,6 +2631,11 @@ def main():
     info_cmd.add_argument("--outfile", default=None, help="Save output to this path")
     info_cmd.add_argument("--full", action="store_true", help="Include all available information")
     info_cmd.set_defaults(func=cmd_info)
+
+    # upgrade
+    upgrade_cmd = subparsers.add_parser("upgrade", help="Upgrade any installed plugin to a new version, if there"
+                                                        "is one")
+    upgrade_cmd.set_defaults(func=cmd_upgrade)
 
     # dev
     dev_cmd = subparsers.add_parser("dev", help="Commands for developer use")
@@ -2535,6 +2656,9 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(-1)
+    elif args.command == 'resetcache':
+        cmd_resetcache(args)
+        sys.exit(0)
 
     update = args.update or args.command == 'update'
     try:
@@ -2552,9 +2676,6 @@ def main():
             sys.exit(-1)
 
     if args.command == 'update':
-        sys.exit(0)
-    elif args.command == 'resetcache':
-        cmd_resetcache(args)
         sys.exit(0)
     else:
         ok = args.func(mainindex, args)
