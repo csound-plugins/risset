@@ -7,7 +7,7 @@ if (sys.version_info.major, sys.version_info.minor) < (3, 7):
     sys.exit(-1)
 
 long_description = open("README.md").read()
-version = subprocess.check_output([sys.executable, "risset.py", "--version"])
+version = subprocess.check_output([sys.executable, "risset.py", "--version"]).decode('utf8').strip()
 
 
 setup(
