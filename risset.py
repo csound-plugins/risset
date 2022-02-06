@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "1.3.1"
+__version__ = "1.3.4"
 
-import glob
 import sys
 
 if (sys.version_info.major, sys.version_info.minor) < (3, 8):
     print("Python 3.8 or higher is needed", file=sys.stderr)
     sys.exit(-1)
 
-if sys.argv[1] == "--version" or sys.argv[1] == "-v":
+if len(sys.argv) >= 2 and (sys.argv[1] == "--version" or sys.argv[1] == "-v"):
     print(__version__)
     sys.exit(0)
 
+import glob
 import os
 import argparse
 import json
@@ -187,16 +187,6 @@ def _errormsg(msg: str) -> None:
 
 def _info(*msgs: str) -> None:
     print(*msgs)
-
-
-def _banner(lines: List[str], margin=2):
-    """ Print a banner message """
-    marginstr = " " * margin
-    sep = "*" * (margin*2 + max(len(line) for line in lines))
-    print("", sep, sep, "", sep="\n", end="")
-    for line in lines:
-        print(marginstr, line, sep="")
-    print(sep, sep, "", sep="\n")
 
 
 class ErrorMsg(str):
