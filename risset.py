@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 import glob
 import sys
@@ -9,6 +9,10 @@ import sys
 if (sys.version_info.major, sys.version_info.minor) < (3, 8):
     print("Python 3.8 or higher is needed", file=sys.stderr)
     sys.exit(-1)
+
+if sys.argv[1] == "--version" or sys.argv[1] == "-v":
+    print(__version__)
+    sys.exit(0)
 
 import os
 import argparse
@@ -19,7 +23,6 @@ import shutil
 import subprocess
 import textwrap
 import fnmatch
-import pprint
 
 import urllib.parse
 import urllib.request
@@ -297,7 +300,9 @@ class Binary:
             'linux' (x86_64), 'windows' (windows 64 bits), 'macos' (x86_64)
         url: either a http link to a binary/.zip file, or empty if the plugin's location is relative to the
             manifest definition
-        build_platform: the platform this binary was built with
+        build_platform: the platform this binary was built with. Might serve as an orientation for
+            users regarding the compatibility of the binary. It can be anything but expected values
+            might be something like "macOS 11.xx.
         extractpath: in the case of using a .zip file as url, the extract path should indicate
             a relative path to the binary within the .zip file structure
     """
@@ -490,7 +495,7 @@ class InstalledPluginInfo:
     """
     Information about an installed plugin
 
-    Atribs:
+    Attribs:
         name: (str) name of the plugin
         dllpath: (Path) path of the plugin binary (a .so, .dll or .dylib file)
         installed_in_system_folder: (bool) is this installed in the systems folder?
@@ -628,7 +633,7 @@ def _zip_extract(zipfile: Path, patterns: List[str]) -> List[Path]:
                     _debug(f"   Name {name} matches!")
                     out.append(Path(z.extract(name, path=outfolder.as_posix())))
                 else:
-                    _debug(f"   Name  {name} does not match")
+                    _debug(f"   Name {name} does not match")
         else:
             out.append(Path(z.extract(pattern, path=outfolder)))
     return out
@@ -646,7 +651,7 @@ def _zip_extract_file(zipfile: Path, extractpath: str) -> Path:
     Returns:
         the path of the extracted file.
 
-    Raises KeyError if `relpath` is not in `zipfile`
+    Raises KeyError if `extractpath` is not in `zipfile`
     """
     return _zip_extract(zipfile, [extractpath])[0]
 
