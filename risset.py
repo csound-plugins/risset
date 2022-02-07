@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "1.3.6"
+__version__ = "1.4.0"
 
 import sys
 
@@ -98,9 +98,9 @@ def _data_dir_for_platform() -> Path:
     """
     platform = sys.platform
     if platform == 'linux':
-        return Path(os.path.expanduser("~/.local/share"))
+        return Path("~/.local/share").expanduser()
     elif platform == 'darwin':
-        return Path(os.path.expanduser("~/Library/Application Support"))
+        return Path("~/Library/Application Support").expanduser()
     elif platform == 'win32':
         p = R"C:\Users\$USERNAME\AppData\Local"
         return Path(os.path.expandvars(p))
@@ -128,6 +128,7 @@ def _mainindex_retrieve(days_threshold=10) -> Optional[MainIndex]:
     days_since_last_modification = (picklefile.stat().st_mtime - time.time()) / 86400
     if days_since_last_modification > days_threshold:
         return None
+    _debug("Recreating main index from pickled version")
     f = open(picklefile, "rb")
     try:
         return pickle.load(f)
@@ -646,13 +647,6 @@ def _zip_extract_file(zipfile: Path, extractpath: str) -> Path:
     """
     return _zip_extract(zipfile, [extractpath])[0]
 
-
-def _zip_list(zipfile: Path) -> List[str]:
-    """ List the contents of a zip file """
-    with ZipFile(zipfile, 'r') as z:
-        return z.namelist()
-
-
 def _csound_opcodes() -> List[str]:
     """
     Returns a list of installed opcodes
@@ -706,21 +700,18 @@ def _get_shell() -> Optional[str]:
 
 
 def _get_binary(binary) -> Optional[str]:
-    if cached:=register.cache.get('csound-bin'):
-        return cached
-    path = shutil.which(binary)
-    register.cache['csound-bin'] = out = path if path else None
+    if (out:=register.cache.get('csound-bin', _UNSET)) is _UNSET:
+        path = shutil.which(binary)
+        register.cache['csound-bin'] = out = path if path else None
     return out
 
 
 def _get_git_binary() -> str:
-    cached = register.cache.get('git-binary')
-    if cached:
-        return cached
-    path = shutil.which("git")
-    if not path or not os.path.exists(path):
-        raise RuntimeError("git binary not found")
-    register.cache['git-binary'] = path
+    if (path := register.cache.get('git-binary')) is None:
+        path = shutil.which("git")
+        if not path or not os.path.exists(path):
+            raise RuntimeError("git binary not found")
+        register.cache['git-binary'] = path
     return path
 
 
@@ -1235,9 +1226,9 @@ def system_plugins_path() -> Optional[Path]:
     """
     Get the path were system plugins are installed.
     """
-    if (out:=register.cache.get('system_plugins_path', _UNSET)) is not _UNSET:
-        return out
-    register.cache['system_plugins_path'] = out = _system_plugins_path()
+
+    if (out:=register.cache.get('system_plugins_path', _UNSET)) is _UNSET:
+        register.cache['system_plugins_path'] = out = _system_plugins_path()
     return out
 
 
@@ -1261,12 +1252,10 @@ def user_installed_dlls() -> List[Path]:
     """
     Return a list of plugins installed at the user plugin path.
     """
-    if (cached:=register.cache.get('user_installed_dlls', _UNSET)) is not _UNSET:
-        return cached
-    path = user_plugins_path()
-    if not path or not path.exists():
-        return []
-    register.cache['user_installed_dlls'] = out = list(path.glob("*"+_plugin_extension()))
+    if (out := register.cache.get('user_installed_dlls', _UNSET)) is _UNSET:
+        path = user_plugins_path()
+        out = list(path.glob("*" + _plugin_extension())) if path and path.exists() else []
+        register.cache['user_installed_dlls'] = out
     return out
 
 
@@ -1274,13 +1263,10 @@ def system_installed_dlls() -> List[Path]:
     """
     LIst of plugins installed at the system's path
     """
-    if cached:=register.cache.get('system_installed_dlls'):
-        return cached
-    path = system_plugins_path()
-    if not path or not path.exists():
-        return []
-    ext = _plugin_extension()
-    register.cache['system_installed_dlls'] = out = list(path.glob("*" + ext))
+    if (out := register.cache.get('system_installed_dlls')) is None:
+        path = system_plugins_path()
+        out = list(path.glob("*" + _plugin_extension())) if path and path.exists() else []
+        register.cache['system_installed_dlls'] = out
     return out
 
 
@@ -1647,12 +1633,12 @@ class MainIndex:
         """
         Returns a dict mapping opcodename to an Opcode definition
         """
-        out = self._cache.get('opcodesbyname')
+        out = self._cache.get('opcodes_by_name')
         if out:
             return out
         out = {opcode.name: opcode
                for opcode in self.defined_opcodes()}
-        self._cache['opcodesbyname'] = out
+        self._cache['opcodes_by_name'] = out
         return out
 
     def parse_manpage(self, opcode: str) -> Optional[ManPage]:
@@ -1663,7 +1649,7 @@ class MainIndex:
         """
         Returns a list of opcodes
         """
-        cached = self._cache.get('opcodes')
+        cached = self._cache.get('defined_opcodes')
         if cached:
             return cached
         opcodes = []
@@ -1677,7 +1663,7 @@ class MainIndex:
                                       abstract=manpage.abstract if manpage else '?',
                                       syntaxes=manpage.syntaxes if manpage else []))
         opcodes.sort(key=lambda opc: opc.name.lower())
-        self._cache['opcodes'] = opcodes
+        self._cache['defined_opcodes'] = opcodes
         return opcodes
 
     def serialize(self, outfile: Union[str, Path] = _MAININDEX_PICKLE_FILE) -> None:
@@ -2402,6 +2388,8 @@ def cmd_man(idx: MainIndex, args) -> bool:
 def cmd_resetcache(args) -> None:
     _rm_dir(RISSET_DATAREPO_LOCALPATH)
     _rm_dir(RISSET_CLONES_PATH)
+    if os.path.exists(_MAININDEX_PICKLE_FILE):
+        os.remove(_MAININDEX_PICKLE_FILE)
 
 
 def update_self():
@@ -2676,6 +2664,7 @@ def main():
         if not update:
             mainindex = _mainindex_retrieve() or MainIndex(update=False)
         else:
+            # this will serialize the mainindex
             mainindex = MainIndex(update=True)
     except Exception as e:
         _debug("Failed to create main index")
