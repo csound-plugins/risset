@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "1.3.4"
+__version__ = "1.3.6"
 
 import sys
 
@@ -15,6 +15,7 @@ if len(sys.argv) >= 2 and (sys.argv[1] == "--version" or sys.argv[1] == "-v"):
 
 import glob
 import os
+import stat
 import argparse
 import json
 from dataclasses import dataclass, asdict as _asdict
@@ -279,7 +280,6 @@ class Asset:
             return [root]
 
 
-
 @dataclass
 class Binary:
     """
@@ -426,7 +426,6 @@ class Plugin:
             return _version_tuple(self.version)
         return (0, 0, 0)
 
-
     def binary_filename(self, platform: str = None) -> Optional[str]:
         """
         The filename of the binary (a .so, .dll or .dylib file)
@@ -470,6 +469,7 @@ class Plugin:
         if not doc_folder.exists():
             raise OSError(f"No doc folder found (declared as {doc_folder}")
         return doc_folder
+
 
 @dataclass
 class Opcode:
@@ -557,6 +557,7 @@ def _csound_version() -> Tuple[int, int]:
         raise OSError("csound binary not found")
     proc = subprocess.Popen([csound_bin, "--version"], stderr=subprocess.PIPE)
     proc.wait()
+    assert proc.stderr is not None
     out = proc.stderr.read().decode('ascii')
     for line in out.splitlines():
         if "--Csound version" not in line:
@@ -705,8 +706,11 @@ def _get_shell() -> Optional[str]:
 
 
 def _get_binary(binary) -> Optional[str]:
+    if cached:=register.cache.get('csound-bin'):
+        return cached
     path = shutil.which(binary)
-    return path if path else None
+    register.cache['csound-bin'] = out = path if path else None
+    return out
 
 
 def _get_git_binary() -> str:
@@ -1027,7 +1031,7 @@ def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
         doc_folder=d.get('doc', ''),
         long_description=d.get('long_description', ''),
         url=pluginurl,
-        manifest_relative_path = subpath,
+        manifest_relative_path=subpath,
         assets=assets,
         cloned_path=_git_local_path(pluginurl)
     )
@@ -1046,10 +1050,24 @@ def _resolve_path(path: Union[str, Path], basedir: Union[str, Path, None]=None
     return (Path(basedir) / p).resolve()
 
 
+
 def _rm_dir(path: Path) -> None:
+
     if not path.exists():
         return
-    shutil.rmtree(path.as_posix())
+
+    # On windows rmtree might fail when a file is marked as read-only
+    # This is the case inside a git repo.
+    # Solution taken from: https://bugs.python.org/issue43657
+    def remove_readonly(func, path, exc_info):
+        "Clear the readonly bit and reattempt the removal"
+        # ERROR_ACCESS_DENIED = 5
+        if func not in (os.unlink, os.rmdir) or exc_info[1].winerror != 5:
+            raise exc_info[1]
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+
+    shutil.rmtree(path.as_posix(), onerror=remove_readonly)
 
 
 def _copy_recursive(src: Path, dest: Path) -> None:
@@ -1501,9 +1519,7 @@ class MainIndex:
             return False
         return True if not check else self._check_plugin_installed(plugin)
 
-    def find_manpage(self,
-                     opcode: str,
-                     markdown=True) -> Optional[Path]:
+    def find_manpage(self, opcode: str, markdown=True) -> Optional[Path]:
         """
         Find the man page for the given opcode
 
@@ -1539,7 +1555,8 @@ class MainIndex:
         _debug(f"Checking if plugin {plugin.name} is installed")
         binfile = plugin.binary_filename()
         if not binfile:
-            _debug(f"No binary for this platform (plugin {plugin.name} supports platforms {plugin.binaries.keys()}")
+            _debug(f"No binary for this platform (plugin {plugin.name} supports the "
+                   f"following platforms: {plugin.binaries.keys()})")
             return None
         dll, user_installed = self.installed_path_for_dll(binfile)
         if not dll:
@@ -1707,8 +1724,8 @@ class MainIndex:
 
         installed_path = installpath / pluginpath.name
         if not (installed_path).exists():
-            return ErrorMsg(f"Installation of plugin {plugin.name} failed, binary was not found in the expected path: "
-                            f"{installed_path.as_posix()}")
+            return ErrorMsg(f"Installation of plugin {plugin.name} failed, binary was not found in "
+                            f"the expected path: {installed_path.as_posix()}")
 
         register.cache.clear()
 
@@ -2021,7 +2038,7 @@ def _is_package_installed(pkg: str) -> bool:
     return importlib.util.find_spec(pkg) is not None
 
 
-def _call_mkdocs(folder: Path, *args: str):
+def _call_mkdocs(folder: Path, *args: str) -> None:
     currentdir = os.getcwd()
     os.chdir(folder)
     subprocess.call([sys.executable, "-m", "mkdocs"] + list(args))
@@ -2181,8 +2198,7 @@ def _manpage_parse(manpage: Path, opcode: str) -> Optional[ManPage]:
     return ManPage(syntaxes=syntaxlines, abstract=abstract)
 
 
-def _docs_generate_index(index: MainIndex,
-                         outfile: Path) -> None:
+def _docs_generate_index(index: MainIndex, outfile: Path) -> None:
     """
     Generate an index for the documentation
 
@@ -2325,7 +2341,7 @@ def _open_in_default_application(path: str):
     if platform == 'linux':
         subprocess.call(["xdg-open", path])
     elif platform == "win32":
-        os.startfile(path)
+        os.startfile(path)  # type: ignore
     elif platform == "darwin":
         subprocess.call(["open", path])
     else:
@@ -2487,12 +2503,12 @@ def cmd_upgrade(idx: MainIndex, args) -> bool:
             err = idx.install_plugin(plugin)
             if err:
                 _errormsg(f"Error while installing {plugin.name}")
-                _errormsg("    ", str(err))
+                _errormsg("    " + str(err))
 
     return True
 
 
-def _running_from_terminal():
+def _running_from_terminal() -> bool:
     return sys.stdin.isatty()
 
 
@@ -2522,7 +2538,6 @@ def _show_markdown_file(path: Path, style='dark') -> None:
 
     print(highlight(code, MarkdownLexer(), TerminalTrueColorFormatter(style=style)))
     # print(highlight(code, MarkdownLexer(), TerminalFormatter()))
-
 
 
 def main():
