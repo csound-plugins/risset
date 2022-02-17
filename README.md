@@ -199,7 +199,7 @@ The url + optional path points to a risset.json manifest file
 ## Manifest
 
 Each plugin has an accompanying manifest in the .json format. The name of this file
-should correspond to the name of the plugin: "myplugin.json"
+is always `risset.json`
 
 #### Example of a manifest for a plugin
 
@@ -267,4 +267,4 @@ should correspond to the name of the plugin: "myplugin.json"
 
 It is desirable, but not a requirement, that all opcodes support the three major desktop
 platforms: linux, macos and windows. Support for a given platform is indicated by the availability of
-a binary for the given platform in the manifest.json file.
+a binary for the given platform in the manifest.
