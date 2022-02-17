@@ -296,11 +296,13 @@ class Binary:
             might be something like "macOS 11.xx.
         extractpath: in the case of using a .zip file as url, the extract path should indicate
             a relative path to the binary within the .zip file structure
+        post_install_script: a script to run after the binary has been installed
     """
     platform: str
     url: str
     build_platform: str = ''
     extractpath: str = ''
+    post_install_script: str = ''
 
     def binary_filename(self) -> str:
         """
@@ -457,6 +459,10 @@ class Plugin:
         path = self.resolve_doc_folder() / markdownfile
         return path if path.exists() else None
 
+    def resolve_path(self, relpath: Union[Path, str]) -> Path:
+        root = self.local_manifest_path().parent
+        return _resolve_path(relpath, root)
+
     def resolve_doc_folder(self) -> Path:
         """
         Resolve the doc folder for this plugin
@@ -470,6 +476,18 @@ class Plugin:
         if not doc_folder.exists():
             raise OSError(f"No doc folder found (declared as {doc_folder}")
         return doc_folder
+
+    def binarydef_for_platform(self, platform: str = None) -> Optional[Binary]:
+        """
+        Return the Binary for the given platform
+
+        If platform is None, use the current platform
+        """
+        if platform is None:
+            platform = register.platform
+
+        return self.binaries.get(platform)
+
 
 
 @dataclass
@@ -948,7 +966,8 @@ def _parse_binarydef(platform: str, binarydef: dict, substitutions: Dict[str, st
     if not build_platform:
         raise ParseError(f"Plugin definition for {platform} should have a build_platform")
     return Binary(platform=platform, url=url, build_platform=build_platform,
-                  extractpath=binarydef.get('extractpath', ''))
+                  extractpath=binarydef.get('extractpath', ''),
+                  post_install_script=binarydef.get('post_install', ''))
 
 
 def _parse_asset(assetdef: dict, defaultsource: str) -> Asset:
@@ -1743,6 +1762,11 @@ class MainIndex:
             _errormsg(f"install_plugin: json error while saving manifest: {e}")
             _errormsg(f"   manifest was: \n{manifest}")
             return ErrorMsg("Error when dumping manifest to json")
+
+        binarydef = plugin.binarydef_for_platform()
+        if binarydef and binarydef.post_install_script:
+            script = plugin.resolve_path(binarydef.post_install_script)
+            subprocess.call(script.as_posix(), shell=True)
 
         with open(manifest_path.as_posix(), "w") as f:
             f.write(manifest_json)
