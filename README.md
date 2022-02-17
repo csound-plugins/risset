@@ -3,8 +3,8 @@
 # risset: a package manager for csound
 
 This is the repository of risset, a package manager for csound external
-plugins and user-defined-opcodes. Plugin binaries and documentation is kept in a separate
-repository at [risset-data](https://github.com/csound-plugins/risset-data)
+plugins and user-defined-opcodes. The index aggregating all available packages is kept 
+at [risset-data](https://github.com/csound-plugins/risset-data).
 
 # Installation
 
