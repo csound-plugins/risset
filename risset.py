@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 import sys
 
@@ -1385,6 +1385,7 @@ class MainIndex:
         Update all sources and reread the index
         """
         self._parse_index(updateindex=True, updateplugins=True, fail_when_debugging=register.debug)
+        self.serialize()
 
     def build_documentation(self, dest: Path = None, buildhtml=True,  onlyinstalled=False) -> Path:
         """
@@ -1703,6 +1704,14 @@ class MainIndex:
 
         Returns:
             None if ok, an ErrorMsg if failed
+            
+        Example
+        =======
+        
+            >>> import risset
+            >>> idx = risset.MainIndex(update=True)
+            >>> pluginpoly = idx.plugins['poly']
+            >>> idx.install_plugin(pluginpoly)
         """
         assert isinstance(plugin, Plugin)
         platform = _get_platform()
