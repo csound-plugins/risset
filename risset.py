@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 import sys
 
@@ -551,7 +551,7 @@ def _main_repository_path() -> Path:
     return RISSET_ROOT / "risset-data"
 
 
-def user_plugins_path() -> Path:
+def user_plugins_path(majorversion=6) -> Path:
     """
     Return the install path for user plugins
 
@@ -563,15 +563,15 @@ def user_plugins_path() -> Path:
         out = Path(cs_user_plugindir)
     else:
         pluginsdir = {
-            'linux': '$HOME/.local/lib/csound/6.0/plugins64',
-            'win32': 'C:\\Users\\$USERNAME\\AppData\\Local\\csound\\6.0\\plugins64',
-            'darwin': '$HOME/Library/csound/6.0/plugins64'
+            'linux': f'$HOME/.local/lib/csound/{majorversion}.0/plugins64',
+            'win32': f'C:\\Users\\$USERNAME\\AppData\\Local\\csound\\{majorversion}.0\\plugins64',
+            'darwin': f'$HOME/Library/csound/{majorversion}.0/plugins64'
         }[sys.platform]
         out = Path(os.path.expandvars(pluginsdir))
     return out
 
-def _csound_version() -> Tuple[int, int]:
-    csound_bin = _get_binary("csound")
+def _csound_version(csoundexe='csound') -> Tuple[int, int]:
+    csound_bin = _get_binary(csoundexe)
     if not csound_bin:
         raise OSError("csound binary not found")
     proc = subprocess.Popen([csound_bin, "--version"], stderr=subprocess.PIPE)
@@ -579,12 +579,11 @@ def _csound_version() -> Tuple[int, int]:
     assert proc.stderr is not None
     out = proc.stderr.read().decode('ascii')
     for line in out.splitlines():
-        if "--Csound version" not in line:
-            continue
-        parts = line.split()
-        versionstr = parts[2]
-        major, minor, *rest = versionstr.split(".")
-        return int(major), int(minor)
+        if match := re.search(r'--Csound\s+version\s+(\d+)\.(\d+)(.*)', line):
+            major = int(match.group(1))
+            minor = int(match.group(2))
+            rest = match.group(3)
+            return major, minor
     raise ValueError("Could not find a version number in the output")
 
 
@@ -1211,31 +1210,34 @@ def _is_arm64():
     return os.uname()[4].startswith("arm")
 
 
-def default_system_plugins_path() -> List[Path]:
+def default_system_plugins_path(major=6, minor=0) -> List[Path]:
     platform = _get_platform()
 
     if platform == 'linux':
-        possible_dirs = ["/usr/local/lib/csound/plugins64-6.0", "/usr/lib/csound/plugins64-6.0"]
+        possible_dirs = [f"/usr/local/lib/csound/plugins64-{major}.{minor}",
+                         f"/usr/lib/csound/plugins64-{major}.{minor}",
+                         f"/usr/lib/x86_64-linux-gnu/csound/plugins64-{major}.{minor}"]
         if _is_arm64():
             # This is where debian in raspberry pi installs csound's plugins
             # https://packages.debian.org/bullseye/armhf/libcsound64-6.0/filelist
-            possible_dirs.append("/usr/lib/arm-linux-gnueabihf/csound/plugins64-6.0/")
+            possible_dirs.append(f"/usr/lib/arm-linux-gnueabihf/csound/plugins64-{major}.{minor}/")
     elif platform == 'macos':
         # The path based on ~ is used when csound is compiled from source.
         # We give that priority since if a user is doing that, it is probably someone who knows
         # what she is doing
         MAC_CSOUNDLIB = 'CsoundLib64'
-        API_VERSION = '6.0'
+        # API_VERSION = '6.0'
+        API_VERSION = f'{major}.{minor}'
         HOME = os.getenv("HOME")
         possible_dirs = [
             f"/usr/local/opt/csound/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
             f"{HOME}/Library/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
             f"/Library/Frameworks/{MAC_CSOUNDLIB}.framework/Versions/{API_VERSION}/Resources/Opcodes64",
-            "/usr/local/lib/csound/plugins64-6.0",
-            "/usr/lib/csound/plugins64-6.0"
+            f"/usr/local/lib/csound/plugins64-{API_VERSION}",
+            f"/usr/lib/csound/plugins64-{API_VERSION}"
         ]
     elif platform == "windows":
-        possible_dirs = ["C:\\Program Files\\Csound6_x64\\plugins64"]
+        possible_dirs = [f"C:\\Program Files\\Csound{major}_x64\\plugins64"]
     else:
         raise PlatformNotSupportedError(f"Platform {platform} not supported")
     return [Path(p).absolute() for p in possible_dirs]
@@ -1251,9 +1253,9 @@ def system_plugins_path() -> Optional[Path]:
     return out
 
 
-def _system_plugins_path() -> Optional[Path]:
+def _system_plugins_path(majorversion=6) -> Optional[Path]:
     # first check if the user has set OPCODE6DIR64
-    opcode6dir64 = os.getenv("OPCODE6DIR64")
+    opcode6dir64 = os.getenv(f"OPCODE{majorversion}DIR64")
     if opcode6dir64:
         possible_paths = [Path(p) for p in opcode6dir64.split(_get_path_separator())]
     else:
@@ -1267,12 +1269,12 @@ def _system_plugins_path() -> Optional[Path]:
     return out
 
 
-def user_installed_dlls() -> List[Path]:
+def user_installed_dlls(majorversion=6) -> List[Path]:
     """
     Return a list of plugins installed at the user plugin path.
     """
     if (out := register.cache.get('user_installed_dlls', _UNSET)) is _UNSET:
-        path = user_plugins_path()
+        path = user_plugins_path(majorversion=majorversion)
         out = list(path.glob("*" + _plugin_extension())) if path and path.exists() else []
         register.cache['user_installed_dlls'] = out
     return out
@@ -1293,12 +1295,18 @@ class MainIndex:
     """
     This class holds risset's main index
     """
-    def __init__(self, datarepo: Path = None, update=False):
+    def __init__(self, datarepo: Path = None, update=False, majorversion: int | None = None):
         """
         Args:
             datarepo: the local path to clone the git main index repository to
             update: if True, update index prior to parsing
         """
+        if majorversion is None:
+            major, minor = _csound_version()
+            if not major == 6 or major == 7:
+                raise RuntimeError(f"Csound version {major}.{minor} not supported")
+            majorversion = major
+
         if datarepo is None:
             datarepo = RISSET_ROOT / 'risset-data'
         else:
@@ -1313,13 +1321,15 @@ class MainIndex:
         assert _is_git_repo(datarepo)
         assert self.indexfile.exists(), f"Main index file not found, searched: {self.indexfile}"
 
-        self.datarepo = datarepo
-        self.version = ''
+        self.datarepo: Path = datarepo
+
+        self.majorversion: int = majorversion
+
         self.pluginsources: Dict[str, IndexItem] = {}
         self.plugins: Dict[str, Plugin] = {}
         self._cache: Dict[str, Any] = {}
         self._parse_index(updateindex=updateindex, updateplugins=update)
-        self.user_plugins_path = user_plugins_path()
+        self.user_plugins_path = user_plugins_path(majorversion=self.majorversion)
         if update:
             self.serialize()
 
@@ -2578,6 +2588,9 @@ def main():
     parser = argparse.ArgumentParser()
     flag(parser, "--debug", help="Print debug information")
     flag(parser, "--update", help="Update the plugins data before any action")
+    parser.add_argument("-c", "--csound", help="Which csound version to use (one of 0, 6, 7). Use 0 to detect the installed version",
+                         default=0, type=int, )
+
     flag(parser, "--version")
     subparsers = parser.add_subparsers(dest='command')
 
@@ -2692,13 +2705,18 @@ def main():
         sys.exit(0)
 
     update = args.update or args.command == 'update'
+    if args.csound == 0:
+        csoundversion, minor = _csound_version()
+    else:
+        csoundversion = args.csound
+
     try:
-        _debug("Creating main index")
+        _debug(f"Creating main index - csound major version: {csoundversion}")
         if not update:
-            mainindex = _mainindex_retrieve() or MainIndex(update=False)
+            mainindex = _mainindex_retrieve() or MainIndex(update=False, majorversion=csoundversion)
         else:
             # this will serialize the mainindex
-            mainindex = MainIndex(update=True)
+            mainindex = MainIndex(update=True, majorversion=csoundversion)
     except Exception as e:
         _debug("Failed to create main index")
         if register.debug:
