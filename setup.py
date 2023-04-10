@@ -23,7 +23,10 @@ setup(
 
     url="https://github.com/csound-plugins/risset",
 
-    install_requires=['mkdocs', 'pygments'],
+    install_requires=[
+        'pygments',
+        'ctcsound7>=0.3.0'
+    ],
 
     entry_points={
         "console_scripts": [
