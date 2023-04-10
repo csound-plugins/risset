@@ -1999,7 +1999,7 @@ class MainIndex:
             d[plugin.name] = plugdict
         return d
 
-    def list_plugins(self, installed=False, nameonly=False, leftcolwidth=20, oneline=False, upgradeable=False):
+    def list_plugins(self, installed=False, nameonly=False, leftcolwidth=20, oneline=False, upgradeable=False, header=True):
         width, height = _termsize()
         descr_max_width = width - 36
 
@@ -2008,6 +2008,9 @@ class MainIndex:
 
         platform = _get_platform()
         csoundversion = _session.csound_version
+
+        print(f"Csound Version: {csoundversion}")
+        print()
 
         for plugin in self.plugins.values():
             data = []
@@ -2045,7 +2048,7 @@ class MainIndex:
             bindef = plugin.find_binary()
             if not bindef:
                 available = ', '.join(plugin.available_binaries())
-                extra_lines.append(f"-- No binaries for {platform}/{_session.csound_version}")
+                extra_lines.append(f"-- No binaries for {platform}/{csoundversion}")
                 extra_lines.append(f"   Available binaries: {available}")
             if oneline and len(descr) > descr_max_width:
                 descr = descr[:descr_max_width] + "…"
