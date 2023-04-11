@@ -2901,7 +2901,7 @@ def main():
             # this will serialize the mainindex
             mainindex = MainIndex(update=True, majorversion=csoundversion)
     except Exception as e:
-        _debug("Failed to create main index")
+        _errormsg("Failed to create main index")
         if _session.debug:
             raise e
         else:
@@ -2912,8 +2912,11 @@ def main():
         sys.exit(0)
     else:
         ok = args.func(mainindex, args)
-        sys.exit(0 if ok else -1)
-    
+        if not ok:
+            _errormsg("Command {args.func} failed")
+            sys.exit(-1)
+        sys.exit(0)
+
 
 if __name__ == "__main__":
     main()
