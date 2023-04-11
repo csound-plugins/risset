@@ -17,6 +17,7 @@ jobs:
                 brew install p7zip
                 7z x csound6.18.dmg
                 ls -l
-                cd Csound-MacOS-universal-6.18.1
+                cd Csound-universal-6.18.1
+                ls -l
                 sudo installer -pkg csound-MacOS-universal-6.18.1.pkg -target /
                 csound --version
