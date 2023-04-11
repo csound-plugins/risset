@@ -1,0 +1,20 @@
+on: [push]
+
+jobs:
+    test:
+        name: Test risset in ${{ matrix.os }}
+        runs-on: ${{ matrix.os }}
+        strategy:
+            matrix:
+                os: [macos-latest]
+        steps:
+            - name: macos
+              if: runner.os == 'macos'
+              run: |
+                curl https://github.com/csound/csound/releases/download/6.18.1/Csound-MacOS-universal-6.18.1.dmg
+                brew install p7zip
+                7za x Csound-MacOS-universal-6.18.1.dmg
+                ls -l
+                cd Csound-MacOS-universal-6.18.1
+                sudo installer -pkg csound-MacOS-universal-6.18.1.pkg -target /
+                csound --version
