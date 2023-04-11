@@ -11,9 +11,9 @@ jobs:
             - name: macos
               if: runner.os == 'macos'
               run: |
-                curl https://github.com/csound/csound/releases/download/6.18.1/Csound-MacOS-universal-6.18.1.dmg
+                curl -Ls -o csound6.18.dmg https://github.com/csound/csound/releases/download/6.18.1/Csound-MacOS-universal-6.18.1.dmg
                 brew install p7zip
-                7za x Csound-MacOS-universal-6.18.1.dmg
+                7za x csound6.18.dmg
                 ls -l
                 cd Csound-MacOS-universal-6.18.1
                 sudo installer -pkg csound-MacOS-universal-6.18.1.pkg -target /
