@@ -24,6 +24,7 @@ jobs:
           cd Csound-universal-6.18.1
           sudo installer -pkg csound-MacOS-universal-6.18.1.pkg -target /
           csound --version
+          ls -l
           # pip install -U risset
           cd risset
           pip install .
