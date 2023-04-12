@@ -27,6 +27,8 @@ jobs:
 
       - name: windows - test install from git
         run: |
+          $Env:Path = $Env:Path + ";C:\Program Files\csound-binaries\build\Release"
+          
           pip install .
           risset update
           risset list
