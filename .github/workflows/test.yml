@@ -1,12 +1,43 @@
 on: [push]
 
 jobs:
-  test:
-    name: Test risset in ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  testwin:
+    name: Test risset on windows
+    runs-on: windows-latest
     strategy:
       matrix:
-        os: [macos-latest]
+        python-version: [ "3.10" ]
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: windows - install csound
+        run: |
+          curl -L -o csound-binaries.zip https://github.com/csound/csound/releases/download/6.18.1/Csound-6.18.1-windows-x64-binaries.zip
+          Expand-Archive csound-binaries.zip -DestinationPath "C:\Program Files\csound-binaries"
+          $Env:PATH += ";C:\Program Files\csound-binaries"
+          csound --version
+
+      - name: windows - test install from git
+        run: |
+          pip install .
+          risset update
+          risset list
+          risset install klib
+          echo "-------------------------------"
+          echo "Checking that the plugin is installed and recognized by csound"
+          csound -z1 
+          risset remove klib
+          pip uninstall --yes risset
+
+  testmacos:
+    name: Test risset on macos
+    runs-on: macos-latest
+    strategy:
+      matrix:
         python-version: ["3.10"]
     steps:
       - uses: actions/checkout@v3
