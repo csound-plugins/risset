@@ -31,3 +31,6 @@ jobs:
           pip install .
           risset update
           risset list
+          risset install klib
+          risset listopcodes
+          csound -z1
