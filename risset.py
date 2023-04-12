@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.3.0"
+__version__ = "2.3.1"
 
 import sys
 
@@ -1410,6 +1410,8 @@ def default_system_plugins_path(major=6, minor=0) -> list[Path]:
         ]
     elif platform == "windows":
         possible_dirs = [f"C:\\Program Files\\Csound{major}_x64\\plugins64"]
+        pathfolders = os.getenv('PATH').split(os.pathsep)
+        possible_dirs += pathfolders
     else:
         raise PlatformNotSupportedError(f"Platform {platform} not supported")
     return [Path(p).absolute() for p in possible_dirs]
