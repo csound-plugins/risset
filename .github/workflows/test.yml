@@ -37,7 +37,7 @@ jobs:
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep dict_
           risset remove klib
-          pip uninstall risset
+          pip uninstall --yes risset
 
       - name: macos - test install from pip
         if: runner.os == 'macos'
@@ -50,6 +50,6 @@ jobs:
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep atstop
           risset remove else
-          pip uninstall risset
+          pip uninstall --yes risset
           
   
