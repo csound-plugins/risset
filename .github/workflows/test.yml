@@ -21,7 +21,7 @@ jobs:
           ls "C:\Program Files\csound-binaries"
           
           
-          [Environment]::SetEnvironmentVariable("PATH", $Env:PATH + ";C:\Program Files\csound-binaries", [EnvironmentVariableTarget]::Machine)
+          [Environment]::SetEnvironmentVariable("PATH", $Env:PATH + ";C:\Program Files\csound-binaries\build", [EnvironmentVariableTarget]::Machine)
           
           csound --version
 
