@@ -27,7 +27,7 @@ jobs:
           cd ..
           ls -l
           # pip install -U risset
-          cd risset
+          # cd risset
           pip install .
           risset update
           risset list
