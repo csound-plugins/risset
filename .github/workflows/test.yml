@@ -21,8 +21,8 @@ jobs:
           ls -r "C:\Program Files\csound-binaries"
           
           [Environment]::SetEnvironmentVariable("PATH", $Env:PATH + ";C:\Program Files\csound-binaries\build\Release", [EnvironmentVariableTarget]::Machine)
-          
-          csound --version
+          Write-Output $Env:PATH
+          csound.exe --version
 
       - name: windows - test install from git
         run: |
