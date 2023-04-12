@@ -22,7 +22,7 @@ jobs:
                 cd Csound-universal-6.18.1
                 sudo installer -pkg csound-MacOS-universal-6.18.1.pkg -target /
                 csound --version
-                pip install risset
+                pip install -U risset
                 risset update
                 risset list
 

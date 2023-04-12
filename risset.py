@@ -1854,6 +1854,15 @@ class MainIndex:
         return out
 
     def parse_manpage(self, opcode: str) -> Optional[ManPage]:
+        """
+        Parse the manual page for a given opcode
+
+        Args:
+            opcode: opcode name
+
+        Returns:
+            a ManPage, if a manpage was found for the opcode, or None
+        """
         manpage = self.find_manpage(opcode, markdown=True)
         return _manpage_parse(manpage, opcode) if manpage else None
 
@@ -1999,7 +2008,9 @@ class MainIndex:
             d[plugin.name] = plugdict
         return d
 
-    def list_plugins(self, installed=False, nameonly=False, leftcolwidth=20, oneline=False, upgradeable=False, header=True):
+    def list_plugins(self, installed=False, nameonly=False, leftcolwidth=20,
+                     oneline=False, upgradeable=False, header=True
+                     ) -> bool:
         width, height = _termsize()
         descr_max_width = width - 36
 
@@ -2058,6 +2069,7 @@ class MainIndex:
                 for line in extra_lines:
                     print(" " * leftcolwidth + f"   |   ", line)
         print()
+        return True
 
     def show_plugin(self, pluginname: str) -> bool:
         """
@@ -2445,7 +2457,7 @@ def _docs_generate_index(index: MainIndex, outfile: Path) -> None:
 ###############################################################
 
 
-def cmd_list(mainindex: MainIndex, args) -> None:
+def cmd_list(mainindex: MainIndex, args) -> bool:
     """
     Lists all plugins available for download
     """
@@ -2456,9 +2468,10 @@ def cmd_list(mainindex: MainIndex, args) -> None:
                 json.dump(d, f, indent=2)
         else:
             print(json.dumps(d, indent=2))
+        return True
     else:
-        mainindex.list_plugins(installed=args.installed, nameonly=args.nameonly, oneline=args.oneline,
-                               upgradeable=args.upgradeable)
+        return mainindex.list_plugins(installed=args.installed, nameonly=args.nameonly, oneline=args.oneline,
+                                      upgradeable=args.upgradeable)
 
 
 def cmd_show(index: MainIndex, args) -> bool:
@@ -2913,7 +2926,7 @@ def main():
     else:
         ok = args.func(mainindex, args)
         if not ok:
-            _errormsg("Command {args.func} failed")
+            _errormsg(f"Command {args.command} failed")
             sys.exit(-1)
         sys.exit(0)
 
