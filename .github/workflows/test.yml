@@ -20,7 +20,7 @@ jobs:
           Expand-Archive csound-binaries.zip -DestinationPath "C:\Program Files\csound-binaries"
           ls -r "C:\Program Files\csound-binaries"
           
-          [Environment]::SetEnvironmentVariable("PATH", $Env:PATH + ";C:\Program Files\csound-binaries\build", [EnvironmentVariableTarget]::Machine)
+          [Environment]::SetEnvironmentVariable("PATH", $Env:PATH + ";C:\Program Files\csound-binaries\build\Release", [EnvironmentVariableTarget]::Machine)
           
           csound --version
 
