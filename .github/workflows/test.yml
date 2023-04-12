@@ -34,3 +34,4 @@ jobs:
           risset install klib
           risset listopcodes
           csound -z1
+          echo "OK!"
