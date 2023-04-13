@@ -1,6 +1,53 @@
 on: [push]
 
 jobs:
+  testlinux:
+    name: Test risset on linux
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: macos - install csound
+        run: |
+          sudo apt install csound
+          ls /usr/lib/*csound*
+          ls /usr/lib/*csnd*
+          csound --version
+          
+      - name: macos - test install from git
+        run: |
+          pip install .
+          risset update
+          risset list
+          risset install klib
+          echo "-------------------------------"
+          echo "Checking that the plugin is installed and recognized by csound"
+          csound -z1 2>&1 | grep dict_
+          risset remove klib
+          pip uninstall --yes risset
+
+      - name: macos - test install from pip
+        if: runner.os == 'macos'
+        run: |
+          pip install risset -U
+          risset update
+          risset list
+          risset install else
+          echo "-------------------------------"
+          echo "Checking that the plugin is installed and recognized by csound"
+          csound -z1 2>&1 | grep atstop
+          risset remove else
+          pip uninstall --yes risset
+          
+  
+    
   testwin:
     name: Test risset on windows
     runs-on: windows-latest
@@ -53,7 +100,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: macos - install csound
-        if: runner.os == 'macos'
         run: |
           curl -L -o csound6.18.dmg https://github.com/csound/csound/releases/download/6.18.1/Csound-MacOS-universal-6.18.1.dmg
           brew install p7zip
@@ -64,7 +110,6 @@ jobs:
           cd ..
 
       - name: macos - test install from git
-        if: runner.os == 'macos'
         run: |
           pip install .
           risset update
@@ -77,7 +122,6 @@ jobs:
           pip uninstall --yes risset
 
       - name: macos - test install from pip
-        if: runner.os == 'macos'
         run: |
           pip install risset -U
           risset update
