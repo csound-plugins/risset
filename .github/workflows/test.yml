@@ -32,7 +32,6 @@ jobs:
           pip uninstall --yes risset
 
       - name: macos - test install from pip
-        if: runner.os == 'macos'
         run: |
           pip install risset -U
           risset update
