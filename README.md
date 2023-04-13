@@ -8,11 +8,11 @@ at [risset-data](https://github.com/csound-plugins/risset-data).
 
 # Installation
 
-`risset` depends only on `git` and `python3` (>= 3.7) being installed. For linux this is
-already the case, for macos and windows both need to be installed.
+`risset` depends only on `git` and `python3` (>= 3.9) being installed. 
+
 
 ```
-pip3 install risset
+pip install risset
 ```
 
 or via git:
@@ -20,7 +20,7 @@ or via git:
 ```bash
 git clone https://github.com/csound-plugins/risset
 cd risset
-python3 setup.py install
+python setup.py install
 ```
 
 These commands will install the script "risset" into your path.
@@ -69,10 +69,6 @@ Manifest      : /home/xx/.local/share/risset/installed-manifests/poly.json
 Abstract      : Multiple (parallel or sequential) instances of an opcode
 Description:
     Multiple (parallel or sequential) instances of an opcode
-Platforms:
-    * linux: Ubuntu 18.04
-    * macos: 10.14.0
-    * windows: Windows 10
 Opcodes:
     defer, poly, poly0, polyseq
 
@@ -200,71 +196,5 @@ The url + optional path points to a risset.json manifest file
 
 Each plugin has an accompanying manifest in the .json format. The name of this file
 is always `risset.json`
-
-#### Example of a manifest for a plugin
-
-```json
-{
-  "name": "else",
-  "version": "1.10.0",  
-  "opcodes": [
-    "accum",
-    "atstop",
-    "bisect",
-    "crackle",
-	...
-  ],
-  "short_description": "Miscellaneous plugins",
-  "long_description": "Collection of miscellaneous plugins",
-  "csound_version": "6.16",
-  "author": "Eduardo Moguillansky",
-  "email": "eduardo.moguillansky@gmail.com",
-  "license": "LGPL",
-  "repository": "https://github.com/csound-plugins/csound-plugins",
-  "binaries": {
-    "linux": {
-      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v1.10.0/csound-plugins--linux.zip",
-      "extractpath": "libelse.so",
-      "build_platform": "Ubuntu 18.04"
-    },
-    "macos": {
-      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v1.10.0/csound-plugins--macos.zip",
-	  "extractpath": "libelse.dylib",
-      "build_platform": "10.14.0"
-    },
-    "windows": {
-      "url": "https://github.com/csound-plugins/csound-plugins/releases/download/v1.10.0/csound-plugins--win64.zip",
-	  "extractpath": "libelse.dll",
-      "build_platform": "Windows 10"
-    }
-  }
-}
-
-```
-
-#### Explanation of each term
-
-* `name`: name of the plugin. This name must be unique
-* `version`: a version string indicating the version of these binaries. The version
-    should have the form "MAYOR.MINOR.PATCH" or "MAJOR.MINOR", where each term is
-    an integer
-* `short_description`: "A series of chaotic oscillators / noise generators"
-* `long_description` (optional): "A longer description of what these opcodes do"
-* `csound_version`: The minimal version of csound needed to run these opcodes.
-    Example "6.14.0" (a string)
-* `binaries`: A dictionary with platforms as keys. Possible platforms: "linux", "macos", "windows".
-    The value for each entry should be itself a dictionary of the form:
-    * `url`: the url where to download the plugin. Can point to a zip file.
-    * `extractpath`: for the case when the url points to a compressed file, this field indicates
-    	whcat should be extracted from the compressed file
-    * `build_platform`: a string identifying the platform used to build the binary
-* `opcodes`: A list of all opcodes included in this plugin (for documentation purposes)
-* `author`: The name of the author / mainteiner
-* `email`: email of the author / mainteiner
-* `repository`: the URL were the source code for this plugin is hosted, for reference
-
-### Platform support
-
-It is desirable, but not a requirement, that all opcodes support the three major desktop
-platforms: linux, macos and windows. Support for a given platform is indicated by the availability of
-a binary for the given platform in the manifest.
+See one of the examples in https://github.com/csound-plugins/csound-plugins/tree/master/src for
+more information about the manifest
