@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.4.0"
+__version__ = "2.4.1"
 
 import sys
 
