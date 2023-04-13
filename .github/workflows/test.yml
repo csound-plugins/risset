@@ -16,9 +16,7 @@ jobs:
 
       - name: macos - install csound
         run: |
-          sudo apt install csound
-          ls /usr/lib/*csound*
-          ls /usr/lib/*csnd*
+          sudo apt install csound csound libcsnd-dev
           csound --version
           
       - name: macos - test install from git
