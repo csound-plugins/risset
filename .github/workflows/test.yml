@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt install csound csound libcsnd-dev
           csound --version
-          
+
       - name: macos - test install from git
         run: |
           pip install .
@@ -42,9 +42,8 @@ jobs:
           csound -z1 2>&1 | grep atstop
           risset remove else
           pip uninstall --yes risset
-          
-  
-    
+
+
   testwin:
     name: Test risset on windows
     runs-on: windows-latest
@@ -63,7 +62,7 @@ jobs:
           curl -L -o csound-binaries.zip https://github.com/csound/csound/releases/download/6.18.1/Csound-6.18.1-windows-x64-binaries.zip
           Expand-Archive csound-binaries.zip -DestinationPath "C:\Program Files\csound-binaries"
           ls -r "C:\Program Files\csound-binaries"
-          
+
           [Environment]::SetEnvironmentVariable("PATH", $Env:PATH + ";C:\Program Files\csound-binaries\build\Release", [EnvironmentVariableTarget]::Machine)
           $Env:Path = $Env:Path + ";C:\Program Files\csound-binaries\build\Release"
           Write-Output $Env:PATH
@@ -72,14 +71,14 @@ jobs:
       - name: windows - test install from git
         run: |
           $Env:Path = $Env:Path + ";C:\Program Files\csound-binaries\build\Release"
-          
+
           pip install .
           risset update
           risset list
           risset install klib
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
-          csound -z1 
+          csound -z1
           risset remove klib
           pip uninstall --yes risset
 
@@ -129,5 +128,3 @@ jobs:
           csound -z1 2>&1 | grep atstop
           risset remove else
           pip uninstall --yes risset
-          
-  
