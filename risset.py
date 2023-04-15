@@ -519,8 +519,14 @@ class IndexItem:
         """
         manifest = self.manifest_path()
         assert manifest.exists() and manifest.suffix == '.json'
-        plugin = _read_plugindef(manifest.as_posix(), url=self.url,
-                                 manifest_relative_path=self.path)
+        try:
+            plugin = _read_plugindef(manifest.as_posix(), url=self.url,
+                                     manifest_relative_path=self.path)
+        except Exception as e:
+            self.update()
+            plugin = _read_plugindef(manifest.as_posix(), url=self.url,
+                                     manifest_relative_path=self.path)
+
         plugin.cloned_path = _git_local_path(self.url)
         return plugin
 
@@ -624,7 +630,7 @@ class Plugin:
         if not doc_folder.exists():
             raise OSError(f"No doc folder found (declared as {doc_folder}")
         return doc_folder
-    
+
     def find_binary(self, platform: str = None, csound_version: int = 0) -> Optional[Binary]:
         """
         Find a binary for the platform and csound versions given / current
@@ -1907,10 +1913,10 @@ class MainIndex:
 
         Returns:
             None if ok, an ErrorMsg if failed
-            
+
         Example
         =======
-        
+
             >>> import risset
             >>> idx = risset.MainIndex(update=True)
             >>> pluginpoly = idx.plugins['poly']
@@ -2273,7 +2279,7 @@ def _is_mkdocs_installed() -> bool:
     return _is_package_installed("mkdocs") or shutil.which("mkdocs") is not None
 
 
-def _generate_documentation(index: MainIndex, dest: Path = None, 
+def _generate_documentation(index: MainIndex, dest: Path = None,
                             buildhtml=True, onlyinstalled=False,
                             opcodesxml: Path = None
                             ) -> Path:
@@ -2863,7 +2869,7 @@ def main():
     listopcodes_cmd = subparsers.add_parser("listopcodes", help="List installed opcodes")
     listopcodes_cmd.add_argument("-l", "--long", action="store_true", help="Long format")
     listopcodes_cmd.set_defaults(func=cmd_list_installed_opcodes)
-    
+
     # reset
     reset_cmd = subparsers.add_parser("resetcache", help="Remove local clones of plugin's repositories")
 
