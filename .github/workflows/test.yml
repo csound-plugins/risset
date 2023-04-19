@@ -88,6 +88,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10"]
+        arch: ["x86_64", "arm64"]
     steps:
       - uses: actions/checkout@v3
 
