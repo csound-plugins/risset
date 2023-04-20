@@ -22,7 +22,7 @@ nchnls = 2
 
 
 instr 1
-  kt eventtime
+  kt timeinsts
   kfreq   bpf kt, 0, 1, 10, 20, 20, 200, 30, 200, 40, 500, 50, 2000
   kinterp = round(k(vco2:a(0.5, 1/5, 2, 0.5) + 0.5))
   if metro(12) == 1 then
