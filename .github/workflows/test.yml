@@ -129,7 +129,7 @@ jobs:
 
           brew install jq
           risset show else
-          file $(risset info | jq -r .pluginspath)/*.so
+          file $(risset info | jq -r .pluginspath)/*.dylib
 
           risset remove klib else
           pip uninstall --yes risset
