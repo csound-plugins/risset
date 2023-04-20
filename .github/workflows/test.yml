@@ -90,7 +90,7 @@ jobs:
           pip uninstall --yes risset
 
   testmacos:
-    name: Test risset on macos
+    name: Test risset on macos ${{ matrix.arch }}
     runs-on: macos-latest
     strategy:
       matrix:
@@ -111,6 +111,7 @@ jobs:
           cd Csound-universal-6.18.1
           sudo installer -pkg csound-MacOS-universal-6.18.1.pkg -target /
           csound --version
+          file $(which csound)
           cd ..
 
       - name: macos ${{ matrix.arch }} - test install from git
