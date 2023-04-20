@@ -31,7 +31,7 @@ jobs:
           csound -z1 2>&1 | grep dict_
           csound -o test/lfnoise-linux-git.flac --format=flac test/lfnoise.csd
           cp test/*.flac artifacts
-          
+
           risset remove klib else
           pip uninstall --yes risset
 
@@ -46,7 +46,7 @@ jobs:
           csound -z1 2>&1 | grep atstop
           csound -o test/lfnoise-linux-pip.flac --format=flac test/lfnoise.csd
           cp test/*.flac artifacts
-                    
+
           risset remove else
           pip uninstall --yes risset
 
@@ -122,6 +122,12 @@ jobs:
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep dict_
+          csound -o test/lfnoise-macos-${{ matrix.arch }}-git.flac --format=flac test/lfnoise.csd
+          cp test/*.flac artifacts
+
+          risset remove klib else
+          pip uninstall --yes risset
+
           risset remove klib
           pip uninstall --yes risset
 
@@ -134,5 +140,8 @@ jobs:
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep atstop
+          csound -o test/lfnoise-macos-${{ matrix.arch }}-pip.flac --format=flac test/lfnoise.csd
+          cp test/*.flac artifacts
+
           risset remove else
           pip uninstall --yes risset
