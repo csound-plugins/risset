@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.4.2"
+__version__ = "2.4.3"
 
 import sys
 
@@ -2700,6 +2700,7 @@ def cmd_info(idx: MainIndex, args) -> bool:
 
     d = {
         'version': idx.version,
+        'pluginspath': idx.user_plugins_path.as_posix(),
         'rissetroot': RISSET_ROOT.as_posix(),
         'clonespath': RISSET_CLONES_PATH.as_posix(),
         'assetspath': RISSET_ASSETS_PATH.as_posix(),
