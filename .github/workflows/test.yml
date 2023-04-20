@@ -123,6 +123,8 @@ jobs:
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep dict_
           csound -o test/lfnoise-macos-${{ matrix.arch }}-git.flac --format=flac test/lfnoise.csd
+
+          mkdir -p artifacts
           cp test/*.flac artifacts
 
           brew install jq
@@ -142,6 +144,8 @@ jobs:
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep atstop
           csound -o test/lfnoise-macos-${{ matrix.arch }}-pip.flac --format=flac test/lfnoise.csd
+
+          mkdir -p artifacts
           cp test/*.flac artifacts
 
           risset remove else
