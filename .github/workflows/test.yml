@@ -118,7 +118,7 @@ jobs:
           pip install .
           risset update
           risset list
-          risset install klib
+          risset install klib else
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep dict_
