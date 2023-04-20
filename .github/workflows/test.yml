@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.9"]
     steps:
       - uses: actions/checkout@v3
 
@@ -14,24 +14,28 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: macos - install csound
+      - name: install csound
         run: |
           sudo apt install csound csound libcsnd-dev
           csound --version
+          mkdir -p artifacts
 
       - name: macos - test install from git
         run: |
           pip install .
           risset update
           risset list
-          risset install klib
+          risset install klib else
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep dict_
-          risset remove klib
+          csound -o test/lfnoise-linux-git.flac --format=flac test/lfnoise.csd
+          cp test/*.flac artifacts
+          
+          risset remove klib else
           pip uninstall --yes risset
 
-      - name: macos - test install from pip
+      - name: test install from pip
         run: |
           pip install risset -U
           risset update
@@ -40,6 +44,9 @@ jobs:
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep atstop
+          csound -o test/lfnoise-linux-pip.flac --format=flac test/lfnoise.csd
+          cp test/*.flac artifacts
+                    
           risset remove else
           pip uninstall --yes risset
 
@@ -49,7 +56,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: [ "3.10" ]
+        python-version: [ "3.9" ]
     steps:
       - uses: actions/checkout@v3
 
@@ -57,7 +64,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: windows - install csound
+      - name: windows - python ${{ matrix.python-version }} install csound
         run: |
           curl -L -o csound-binaries.zip https://github.com/csound/csound/releases/download/6.18.1/Csound-6.18.1-windows-x64-binaries.zip
           Expand-Archive csound-binaries.zip -DestinationPath "C:\Program Files\csound-binaries"
@@ -87,7 +94,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.9"]
         arch: ["x86_64", "arm64"]
     steps:
       - uses: actions/checkout@v3
@@ -106,7 +113,7 @@ jobs:
           csound --version
           cd ..
 
-      - name: macos - test install from git
+      - name: macos ${{ matrix.arch }} - test install from git
         run: |
           pip install .
           risset update
@@ -118,7 +125,7 @@ jobs:
           risset remove klib
           pip uninstall --yes risset
 
-      - name: macos - test install from pip
+      - name: macos ${{ matrix.arch }} - test install from pip
         run: |
           pip install risset -U
           risset update
