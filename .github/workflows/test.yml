@@ -128,8 +128,6 @@ jobs:
           risset remove klib else
           pip uninstall --yes risset
 
-          risset remove klib
-          pip uninstall --yes risset
 
       - name: macos ${{ matrix.arch }} - test install from pip
         run: |
