@@ -1,4 +1,4 @@
-on: [push]
+on: [push, workflow_dispatch]
  
 jobs:
   testlinux:
@@ -50,7 +50,7 @@ jobs:
           risset remove else
           pip uninstall --yes risset
 
-    - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v3
         with:
           path: artifacts/*
 
