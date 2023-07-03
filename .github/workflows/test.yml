@@ -50,6 +50,10 @@ jobs:
           risset remove else
           pip uninstall --yes risset
 
+    - uses: actions/upload-artifact@v3
+        with:
+          path: artifacts/*
+
 
   testwin:
     name: Test risset on windows
@@ -153,3 +157,7 @@ jobs:
 
           risset remove else
           pip uninstall --yes risset
+
+      - uses: actions/upload-artifact@v3
+        with:
+          path: artifacts/*
