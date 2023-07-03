@@ -4,3 +4,4 @@ dist
 .mypy*
 __pycache__*
 build
+.#*
