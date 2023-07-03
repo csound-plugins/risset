@@ -1,6 +1,5 @@
-on:
-  - push
-
+on: [push]
+ 
 jobs:
   testlinux:
     name: Test risset on linux
