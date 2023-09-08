@@ -41,7 +41,42 @@ if TYPE_CHECKING:
     from typing import Union, Optional, Any
 
 
+class PlatformNotSupportedError(Exception):
+    """Raised when the current platform is not supported"""
+
+class SchemaError(Exception):
+    """An entity (a dict, a json file) does not fulfill the needed schema"""
+
+class ParseError(Exception):
+    """Parse error in a manifest file"""
+
+
+def _data_dir_for_platform() -> Path:
+    """
+    Returns the data directory for the given platform
+    """
+    platform = sys.platform
+    if platform == 'linux':
+        return Path("~/.local/share").expanduser()
+    elif platform == 'darwin':
+        return Path("~/Library/Application Support").expanduser()
+    elif platform == 'win32':
+        p = R"C:\Users\$USERNAME\AppData\Local"
+        return Path(os.path.expandvars(p))
+    else:
+        raise PlatformNotSupportedError(f"Platform unknown: {platform}")
+
+
 INDEX_GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
+RISSET_ROOT = _data_dir_for_platform() / "risset"
+RISSET_DATAREPO_LOCALPATH = RISSET_ROOT / "risset-data"
+RISSET_GENERATED_DOCS = RISSET_ROOT / "man"
+RISSET_CLONES_PATH = RISSET_ROOT / "clones"
+RISSET_ASSETS_PATH = RISSET_ROOT / "assets"
+_MAININDEX_PICKLE_FILE = RISSET_ROOT / "mainindex.pickle"
+MACOS_ENTITLEMENTS_PATH = RISSET_ASSETS_PATH / 'csoundplugins.entitlements'
+
+UNKNOWN_VERSION = "Unknown"
 
 
 _supported_platforms = {
@@ -54,6 +89,7 @@ _supported_platforms = {
 
 
 _UNSET = object()
+
 
 _entitlements_str = r"""
 <?xml version="1.0" encoding="UTF-8"?>
@@ -290,29 +326,6 @@ def _abbrev(s: str, maxlen: int) -> str:
     return f"{s[:l - rightlen - 1]}…{s[-rightlen:]}"
 
 
-def _data_dir_for_platform() -> Path:
-    """
-    Returns the data directory for the given platform
-    """
-    platform = _session.platform
-    if platform == 'linux':
-        return Path("~/.local/share").expanduser()
-    elif platform == 'darwin':
-        return Path("~/Library/Application Support").expanduser()
-    elif platform == 'windows':
-        p = R"C:\Users\$USERNAME\AppData\Local"
-        return Path(os.path.expandvars(p))
-    else:
-        raise PlatformNotSupportedError(f"Platform unknown: {platform}")
-
-
-RISSET_ROOT = _data_dir_for_platform() / "risset"
-RISSET_DATAREPO_LOCALPATH = RISSET_ROOT / "risset-data"
-RISSET_GENERATED_DOCS = RISSET_ROOT / "man"
-RISSET_CLONES_PATH = RISSET_ROOT / "clones"
-RISSET_ASSETS_PATH = RISSET_ROOT / "assets"
-_MAININDEX_PICKLE_FILE = RISSET_ROOT / "mainindex.pickle"
-MACOS_ENTITLEMENTS_PATH = RISSET_ASSETS_PATH / 'csoundplugins.entitlements'
 
 
 def _mainindex_retrieve(days_threshold=10) -> Optional[MainIndex]:
@@ -779,20 +792,6 @@ class InstalledPluginInfo:
     def versiontuple(self) -> tuple[int, int, int]:
         return _version_tuple(self.versionstr) if self.versionstr and self.versionstr != UNKNOWN_VERSION else (0, 0, 0)
 
-
-UNKNOWN_VERSION = "Unknown"
-
-
-class PlatformNotSupportedError(Exception):
-    """Raised when the current platform is not supported"""
-
-
-class SchemaError(Exception):
-    """An entity (a dict, a json file) does not fulfill the needed schema"""
-
-
-class ParseError(Exception):
-    """Parse error in a manifest file"""
 
 
 def _main_repository_path() -> Path:
