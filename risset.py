@@ -25,6 +25,7 @@ import subprocess
 import textwrap
 import fnmatch
 import pprint
+import platform
 
 import urllib.parse
 import urllib.request
@@ -43,7 +44,67 @@ if TYPE_CHECKING:
 INDEX_GIT_REPOSITORY = "https://github.com/csound-plugins/risset-data"
 
 
+_supported_platforms = {
+    'macos',
+    'linux',
+    'windows',
+    'macos-arm64',
+    'linux-arm64'
+}
+
+
 _UNSET = object()
+
+_entitlements_str = r"""
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+</dict>
+</plist>
+"""
+
+
+def _macos_save_entitlements() -> Path:
+    path = MACOS_ENTITLEMENTS_PATH
+    _ensure_parent_exists(path)
+    if not _session.entitlements_saved:
+        with open(path, 'w') as f:
+            f.write(_entitlements_str)
+        _session.entitlements_saved = True
+    return path
+
+# SIGNATURE_ID="-"
+# codesign --force --sign "${SIGNATURE_ID}" --entitlements csoundplugins.entitlements "/path/to/dylib"
+
+
+def _macos_codesign(dylibpaths: list[str], signature='-'):
+    if not shutil.which('codesign'):
+        raise RuntimeError("Could not find the binary 'codesign' in the path")
+    entitlements_path = _macos_save_entitlements()
+    assert os.path.exists(entitlements_path)
+    for path in dylibpaths:
+        subprocess.call(['codesign', '--force', '--sign', signature, '--entitlements', entitlements_path, path])
+
+
+def _platform_architecture() -> str:
+    proc = platform.processor()
+    bits, linkage = platform.architecture()
+    if proc == 'arm':
+        if bits == '64bit':
+            return 'arm64'
+        elif bits == '32bit':
+            return 'arm32'
+    elif proc == 'x86_64':
+        return 'x86_64'
+
+    raise RuntimeError(f"Architecture not supported (processor: {proc}, bits: {bits})")
 
 
 def _csoundlib_version() -> tuple[int, int]:
@@ -55,7 +116,7 @@ def _csoundlib_version() -> tuple[int, int]:
 
 
 def _csound_version(csoundexe='csound') -> tuple[int, int]:
-    csound_bin = _get_binary(csoundexe)
+    csound_bin = _get_csound_binary(csoundexe)
     if not csound_bin:
         raise OSError("csound binary not found")
     proc = subprocess.Popen([csound_bin, "--version"], stderr=subprocess.PIPE)
@@ -95,11 +156,28 @@ class _Session:
             'darwin': 'macos',
             'win32': 'windows'
         }[sys.platform]
+
+        self.architecture = _platform_architecture()
+
+        self.platformid = self._platform_id()
+        """One of 'linux', 'windows', 'macos' (if x86_64), or their 'arm64' variant: macos-arm64, linux-arm64, ..."""
+
         self.debug = False
         major, minor = _csoundlib_version()
         self.csound_version: int = major * 1000 + minor * 10
         self.stop_on_errors = True
+        self.entitlements_saved = False
         self.cache = {}
+
+    def _platform_id(self) -> str:
+        """
+        Returns one of 'linux', 'windows', 'macos' (intel x86_64) or their 'arm64' variant:
+        'macos-arm64', 'linux-arm64', etc.
+        """
+        if self.architecture == 'x86_64':
+            return self.platform
+        else:
+            return f'{self.platform}-{self.architecture}'
 
 
 _session = _Session()
@@ -141,16 +219,6 @@ class _VersionRange:
         maxversion = self.maxversion or 99999
         b = versionid < maxversion if not self.includemax else versionid <= maxversion
         return a and b
-
-
-def _get_platform() -> str:
-    """
-    Returns one of "linux", "macos", "windows"
-
-    * all 'linux', 'macos' and 'windows' refer to x86-64
-    """
-    # TODO: add support for arm linux (raspi, etc.)
-    return _session.platform
 
 
 def _termsize(width=80, height=25) -> tuple[int, int]:
@@ -221,12 +289,12 @@ def _data_dir_for_platform() -> Path:
     """
     Returns the data directory for the given platform
     """
-    platform = sys.platform
+    platform = _session.platform
     if platform == 'linux':
         return Path("~/.local/share").expanduser()
     elif platform == 'darwin':
         return Path("~/Library/Application Support").expanduser()
-    elif platform == 'win32':
+    elif platform == 'windows':
         p = R"C:\Users\$USERNAME\AppData\Local"
         return Path(os.path.expandvars(p))
     else:
@@ -239,6 +307,7 @@ RISSET_GENERATED_DOCS = RISSET_ROOT / "man"
 RISSET_CLONES_PATH = RISSET_ROOT / "clones"
 RISSET_ASSETS_PATH = RISSET_ROOT / "assets"
 _MAININDEX_PICKLE_FILE = RISSET_ROOT / "mainindex.pickle"
+MACOS_ENTITLEMENTS_PATH = RISSET_ASSETS_PATH / 'csoundplugins.entitlements'
 
 
 def _mainindex_retrieve(days_threshold=10) -> Optional[MainIndex]:
@@ -426,7 +495,10 @@ class Binary:
         post_install_script: a script to run after the binary has been installed
     """
     platform: str
-    """The platform for which this binary was compiled"""
+    """The platform for which this binary was compiled. 
+    
+    One of linux, linux-arm64, macos, macos-arm64, window
+    See _supported_platforms for an up-to-date list"""
 
     url: str
     """The url of the binary (can be a zip file)"""
@@ -631,9 +703,16 @@ class Plugin:
             raise OSError(f"No doc folder found (declared as {doc_folder}")
         return doc_folder
 
-    def find_binary(self, platform: str = None, csound_version: int = 0) -> Optional[Binary]:
+    def find_binary(self, platformid: str = None, csound_version: int = 0) -> Optional[Binary]:
         """
         Find a binary for the platform and csound versions given / current
+
+        Args:
+            platformid: the platform id. If intel x86-64, simply the platform ('macos', 'linux', 'windows'),
+                otherwise the platform and architecture ('macos-arm64', 'linux-arm64', ...)
+            csound_version: the csound version as int (6.18 = 6180, 6.19 = 6190, 7.01 = 7010). This should be
+                the version of csound for which the plugin is to be installed. In the plugin definition each
+                binary defines a version range for which it is built.
 
         Returns:
             a Binary which matches the given platform and csound version, or None
@@ -645,12 +724,14 @@ class Plugin:
         else:
             assert isinstance(csound_version, int) and csound_version >= 6000, f"Got {csound_version}"
 
-        if platform is None:
-            platform = _session.platform
+        if platformid is None:
+            platformid = _session.platformid
 
         possible_binaries = [b for b in self.binaries
-                             if b.platform == platform and b.matches_versionid(csound_version)]
+                             if b.platform == platformid and b.matches_versionid(csound_version)]
         if not possible_binaries:
+            _debug(f"Plugin '{self.name}' does not seem to have a binary for platform '{platformid}'. "
+                   f"Found binaries for platforms: {[b.platform for b in self.binaries]}")
             return None
         else:
             if len(possible_binaries) > 1:
@@ -820,23 +901,34 @@ def _zip_extract_file(zipfile: Path, extractpath: str) -> Path:
     return _zip_extract(zipfile, [extractpath])[0]
 
 
-def _csound_opcodes() -> list[str]:
+def _csound_opcodes(method='csound') -> list[str]:
     """
     Returns a list of installed opcodes
     """
-    csound_bin = _get_binary("csound")
-    if not csound_bin:
-        raise RuntimeError("Did not find csound binary")
-    proc = subprocess.run([csound_bin, "-z1"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    txt = proc.stdout.decode('ascii')
-    opcodes = []
-    for line in txt.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split()
-        opcodes.append(parts[0])
-    return opcodes
+    if method == 'csound':
+        csound_bin = _get_csound_binary("csound")
+        if not csound_bin:
+            raise RuntimeError("Did not find csound binary")
+        proc = subprocess.run([csound_bin, "-z1"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        txt = proc.stdout.decode('ascii')
+        opcodes = []
+        for line in txt.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            opcodes.append(parts[0])
+        return opcodes
+    elif method == 'ctcsound':
+        import ctcsound7
+        cs = ctcsound7.Csound()
+        cs.setOption("-d")  # supress displays
+        #if opcodedir:
+        #    cs.setOption(f'--opcode-dir={opcodedir}')
+        opcodes, n = cs.newOpcodeList()
+        opcodeNames = [opc.opname.decode('utf-8') for opc in opcodes]
+        cs.disposeOpcodeList(opcodes)
+        return opcodeNames
 
 
 def _plugin_extension() -> str:
@@ -872,7 +964,7 @@ def _get_shell() -> Optional[str]:
     return None
 
 
-def _get_binary(binary) -> Optional[str]:
+def _get_csound_binary(binary) -> Optional[str]:
     if (out := _session.cache.get('csound-bin', _UNSET)) is _UNSET:
         path = shutil.which(binary)
         _session.cache['csound-bin'] = out = path if path else None
@@ -886,6 +978,14 @@ def _get_git_binary() -> str:
             raise RuntimeError("git binary not found")
         _session.cache['git-binary'] = path
     return path
+
+
+def _ensure_parent_exists(path: Path) -> None:
+    if path.is_dir():
+        parent = path
+    else:
+        parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
 
 
 def _git_local_path(repo: str, update=False) -> Path:
@@ -929,9 +1029,7 @@ def _git_clone_into(repo: str, destination: Path, depth=1) -> None:
     if destination.exists():
         raise OSError("Destination path already exists, can't clone git repository")
     gitbin = _get_git_binary()
-    parent = destination.parent
-    if not parent.exists():
-        parent.mkdir(parents=True, exist_ok=True)
+    _ensure_parent_exists(destination)
     args = [gitbin, "clone"]
     if depth > 0:
         args.extend(["--depth", str(depth)])
@@ -1116,6 +1214,10 @@ def _parse_binarydef(binarydef: dict, substitutions: dict[str, str]) -> Binary:
     platform = binarydef.get('platform')
     if not platform:
         raise ParseError(f"Plugin binary should have a platform key. Binary definition: {binarydef}")
+
+    if platform not in _supported_platforms:
+        raise ParseError(f"Platform '{platform}' not supported. "
+                         f"Possible platforms are {_supported_platforms}")
 
     url = binarydef.get('url')
     if not url:
@@ -1337,10 +1439,10 @@ def _make_install_manifest(plugin: Plugin, assetfiles: list[str] = None) -> dict
             (only the filenames, no path: all assets are placed in a flat folder
             under the plugins prefix)
     """
-    platform = _get_platform()
-    binary = plugin.find_binary(platform=platform)
+    platform_id = _session.platformid
+    binary = plugin.find_binary(platformid=platform_id)
     if not binary:
-        raise RuntimeError(f"No binary found for plugin {plugin.name} (platform: {platform}")
+        raise RuntimeError(f"No binary found for plugin {plugin.name} (platform: {platform_id}")
 
     out: dict[str, Any] = {}
     out['name'] = plugin.name
@@ -1352,7 +1454,7 @@ def _make_install_manifest(plugin: Plugin, assetfiles: list[str] = None) -> dict
     out['short_description'] = plugin.short_description
     out['build_platform'] = binary.build_platform
     out['binary'] = binary.binary_filename()
-    out['platform'] = platform
+    out['platform'] = platform_id
     out['assetfiles'] = assetfiles or []
     return out
 
@@ -1385,18 +1487,14 @@ def _download_file(url: str, cache=True) -> Path:
     return path
 
 
-def _is_arm64():
-    return os.uname()[4].startswith("arm")
-
-
 def default_system_plugins_path(major=6, minor=0) -> list[Path]:
-    platform = _get_platform()
+    platform = _session.platform
 
     if platform == 'linux':
         possible_dirs = [f"/usr/local/lib/csound/plugins64-{major}.{minor}",
                          f"/usr/lib/csound/plugins64-{major}.{minor}",
                          f"/usr/lib/x86_64-linux-gnu/csound/plugins64-{major}.{minor}"]
-        if _is_arm64():
+        if _session.architecture == 'arm64':
             # This is where debian in raspberry pi installs csound's plugins
             # https://packages.debian.org/bullseye/armhf/libcsound64-6.0/filelist
             possible_dirs.append(f"/usr/lib/arm-linux-gnueabihf/csound/plugins64-{major}.{minor}/")
@@ -1672,12 +1770,15 @@ class MainIndex:
         manifests = list(path.glob("*.json"))
         return manifests
 
-    def _check_plugin_installed(self, plugin: Plugin) -> bool:
+    def _is_plugin_recognized_by_csound(self, plugin: Plugin) -> bool:
         """
         Check if a given plugin is installed
 
         This routine queries the available opcodes in csound and checks
         that the opcodes in plugin are present
+
+        Returns:
+            True if the plugin is recognized by csound
         """
         test = plugin.opcodes[0]
         opcodes = _csound_opcodes()
@@ -1722,7 +1823,7 @@ class MainIndex:
         dll, user_installed = self.installed_path_for_dll(binfile)
         if dll is None:
             return False
-        return True if not check else self._check_plugin_installed(plugin)
+        return True if not check else self._is_plugin_recognized_by_csound(plugin)
 
     def find_manpage(self, opcode: str, markdown=True) -> Optional[Path]:
         """
@@ -1810,8 +1911,8 @@ class MainIndex:
             the path of the binary.
         """
         assert isinstance(plugin, Plugin)
-        platform = _get_platform()
-        bindef = plugin.find_binary(platform=platform)
+        platform = _session.platformid
+        bindef = plugin.find_binary(platformid=platform)
         if not bindef:
             available = ", ".join(plugin.available_binaries())
             raise PlatformNotSupportedError(
@@ -1923,29 +2024,29 @@ class MainIndex:
             >>> idx.install_plugin(pluginpoly)
         """
         assert isinstance(plugin, Plugin)
-        platform = _get_platform()
+        platformid = _session.platformid
         try:
-            pluginpath = self.get_plugin_dll(plugin)
+            # This method will download and extract the plugin if necessary
+            plugin_binary_path = self.get_plugin_dll(plugin)
         except PlatformNotSupportedError as e:
-            return ErrorMsg(f"Platform not supported (plugin: {plugin.name}): {e}")
+            return ErrorMsg(f"Platform '{platformid}' not supported for plugin '{plugin.name}': {e}")
         except RuntimeError as e:
-            return ErrorMsg(f"Error while getting (plugin: {plugin.name}): {e}")
+            return ErrorMsg(f"Error while getting plugin dll (plugin: {plugin.name}): {e}")
         except SchemaError as e:
             return ErrorMsg(f"The plugin definition for {plugin.name} has errors: {e}")
 
         installpath = user_plugins_path()
-        if not installpath.exists():
-            installpath.mkdir(parents=True, exist_ok=True)
+        installpath.mkdir(parents=True, exist_ok=True)
         _debug("User plugins path: ", installpath.as_posix())
-        _debug("Downloaded dll for plugin: ", pluginpath.as_posix())
+        _debug("Downloaded dll for plugin: ", plugin_binary_path.as_posix())
         try:
-            shutil.copy(pluginpath.as_posix(), installpath.as_posix())
+            shutil.copy(plugin_binary_path.as_posix(), installpath.as_posix())
         except IOError as e:
-            _debug(f"Tried to copy {pluginpath.as_posix()} to {installpath.as_posix()} but failed")
+            _debug(f"Tried to copy {plugin_binary_path.as_posix()} to {installpath.as_posix()} but failed")
             _debug(str(e))
             return ErrorMsg("Could not copy the binary to the install path")
 
-        installed_path = installpath / pluginpath.name
+        installed_path = installpath / plugin_binary_path.name
         if not installed_path.exists():
             return ErrorMsg(f"Installation of plugin {plugin.name} failed, binary was not found in "
                             f"the expected path: {installed_path.as_posix()}")
@@ -1954,7 +2055,17 @@ class MainIndex:
 
         # installation succeeded, check that it works
         if not self.is_plugin_installed(plugin, check=check):
-            _debug(f"Plugin {plugin.name} does not seem to be installed")
+            if platformid.startswith('macos'):
+                # try code signing the binary
+                _debug(f"The binary '{installed_path.as_posix()}' was installed but it is not recognized by csound. "
+                       f"It might be a security problem. I will try to code sign it")
+                _macos_codesign([installed_path.as_posix()])
+                if self._is_plugin_recognized_by_csound(plugin):
+                    _debug("... Ok, that worked. ")
+                else:
+                    _errormsg(f"The plugin '{plugin.name}' was not recognized. The reason might be that the binary"
+                              f" needs to be code-signed. ")
+
             if not check:
                 return ErrorMsg(f"Tried to install plugin {plugin.name}, but the binary"
                                 f" is not present.")
@@ -1967,7 +2078,7 @@ class MainIndex:
         assetfiles = []
         if plugin.assets:
             for asset in plugin.assets:
-                if asset.platform == 'all' or asset.platform == platform:
+                if asset.platform == 'all' or asset.platform == platformid:
                     _debug(f"Installing asset {asset.identifier()}")
                     assetfiles.extend(self.install_asset(asset, plugin.name))
 
@@ -2016,6 +2127,25 @@ class MainIndex:
             d[plugin.name] = plugdict
         return d
 
+    def available_plugins(self, platformid: str = '', csound_version: int = 0, installed_only=False,
+                          not_installed_only=False
+                          ) -> list[Plugin]:
+        if not platformid:
+            platformid = _session.platformid
+
+        if not csound_version:
+            csound_version = _session.csound_version
+
+        plugins = []
+        for plugin in self.plugins.values():
+            if plugin.find_binary(platformid=platformid, csound_version=csound_version):
+                if installed_only and not self.is_plugin_installed(plugin):
+                    continue
+                elif not_installed_only and self.is_plugin_installed(plugin):
+                    continue
+                plugins.append(plugin)
+        return plugins
+
     def list_plugins(self, installed=False, nameonly=False, leftcolwidth=20,
                      oneline=False, upgradeable=False, header=True
                      ) -> bool:
@@ -2025,7 +2155,7 @@ class MainIndex:
         if upgradeable:
             installed = True
 
-        platform = _get_platform()
+        platform = _session.platformid
         csoundversion = _session.csound_version
 
         print(f"Csound Version: {csoundversion}")
@@ -2185,8 +2315,7 @@ class MainIndex:
         """
         destination_folder = RISSET_ASSETS_PATH / prefix
         sources = asset.retrieve()
-        if sources:
-            destination_folder.mkdir(parents=True, exist_ok=True)
+        destination_folder.mkdir(parents=True, exist_ok=True)
         for source in sources:
             _debug(f"Copying asset {source} to {destination_folder}")
             if source.is_dir():
@@ -2663,6 +2792,23 @@ def cmd_dev(idx: MainIndex, args) -> bool:
             open(args.outfile, "w").write(outstr)
         else:
             print(outstr)
+    elif args.cmd == 'codesign':
+        if _session.platform != 'macos':
+            _errormsg(f"Code signing is only available for macos, not for '{_session.platform}'")
+            return False
+        plugins = idx.available_plugins(installed_only=True)
+        dylibs = []
+        for plugin in plugins:
+            info = idx.installed_plugin_info(plugin)
+            assert info is not None
+            dylibs.append(info.dllpath.as_posix())
+
+        if not dylibs:
+            _debug(f"Did not find any binary to sign. Plugins: {plugins}")
+        else:
+            _debug(f"Code signing the following plugin binaries: {dylibs}")
+            _macos_codesign(dylibs)
+
     return True
 
 
@@ -2672,7 +2818,7 @@ def cmd_makedocs(idx: MainIndex, args) -> bool:
 
     Options:
         --onlyinstalled: if True, only generate documentation for installed opcodes
-        --outfolder: if given the documentation is placed in this folder. Otherwise it is
+        --outfolder: if given the documentation is placed in this folder. Otherwise, it is
             placed in RISSET_GENERATED_DOCS
     """
     outfolder = args.outfolder or RISSET_GENERATED_DOCS
@@ -2885,11 +3031,13 @@ def main():
                                                         "is one")
     upgrade_cmd.set_defaults(func=cmd_upgrade)
 
-    # dev
+    # dev: risset dev opcodesxml
+    #      risset dev codesign
     dev_cmd = subparsers.add_parser("dev", help="Commands for developer use")
+
     dev_cmd.add_argument("--outfile", default=None,
                          help="Set the output file for any action generating output")
-    dev_cmd.add_argument("cmd", choices=["opcodesxml"],
+    dev_cmd.add_argument("cmd", choices=["opcodesxml", "codesign"],
                          help="Subcommand. opcodesxml: generate xml output similar to opcodes.xml in the csound's manual")
     dev_cmd.set_defaults(func=cmd_dev)
 
