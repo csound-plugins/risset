@@ -94,17 +94,22 @@ def _macos_codesign(dylibpaths: list[str], signature='-'):
 
 
 def _platform_architecture() -> str:
-    proc = platform.processor()
+    processor = platform.processor().lower()
     bits, linkage = platform.architecture()
-    if proc == 'arm':
+    if processor == 'arm':
         if bits == '64bit':
             return 'arm64'
         elif bits == '32bit':
             return 'arm32'
-    elif proc == 'x86_64':
+    elif processor == 'x86_64':
         return 'x86_64'
+    elif processor == 'i386':
+        if bits == '64bit':
+            return 'x86_64'
+        elif bits == '32bit':
+            return 'x86'
 
-    raise RuntimeError(f"Architecture not supported (processor: {proc}, bits: {bits})")
+    raise RuntimeError(f"Architecture not supported ({processor}=, {bits=}, {linkage=})")
 
 
 def _csoundlib_version() -> tuple[int, int]:
