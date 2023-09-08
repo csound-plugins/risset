@@ -20,13 +20,12 @@ jobs:
           csound --version
           mkdir -p artifacts
 
-      - name: macos - test install from git
+      - name: linux - test install from git
         run: |
           pip install .
           risset update
           risset list
           risset install klib else
-          risset dev codesign
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep dict_
@@ -110,6 +109,7 @@ jobs:
 
       - name: macos - install csound
         run: |
+          set -x
           curl -L -o csound6.18.dmg https://github.com/csound/csound/releases/download/6.18.1/Csound-MacOS-universal-6.18.1.dmg
           brew install p7zip
           7z x csound6.18.dmg
@@ -122,10 +122,12 @@ jobs:
 
       - name: macos ${{ matrix.arch }} - test install from git
         run: |
+          set -x
           pip install .
           risset update
           risset list
           risset install klib else
+          risset dev codesign
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep dict_
