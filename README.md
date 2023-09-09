@@ -88,7 +88,7 @@ $ risset man poly
 ---------------
 
 
-## Risset commands
+# Risset commands
 
 ### update
 
@@ -103,7 +103,7 @@ List all available plugins for your platform
 
     $ risset list [options]
 
-#### Options
+##### Options
 
 * `--nameonly`: Output just the name of each plugin
 * `--installed`: List only installed plugins
@@ -151,8 +151,7 @@ Open man page as markdown in the command line
     $ risset man [options] <opcode>
 
 
-**Options**
-
+##### Options
 
 * `-s, --simplepath`: Print just the path of the manual page
 * `-m, --markdown`: Use the .md page instead of the .html version
@@ -184,7 +183,8 @@ Upgrade any installed plugin to the latest version
 
 List installed opcodes
 
-**Options**
+
+##### Options
 
 * `-l, --long`: Long format
 
@@ -215,7 +215,7 @@ dict_free           klib        Free a hashtable
 
 Download a plugin
 
-**Options**
+##### Options
 
 * `--path PATH`: Directory to download the plugin to (default: current directory)
 * `--platform`: The platform of the plugin to download (default: current platform). One of *linux*, *macos*, *window*, *macos-arm64*, *linux-arm64*
@@ -229,7 +229,7 @@ Outputs information about the environment as json in order to be integrated by o
 For example, **CsoundQT** uses this command to read the installed plugins and their opcodes
 and documentation
 
-**Options**
+##### Options
 
 * `--outfile OUTFILE`: Save output to this path
 * `--full`: Include all available information
