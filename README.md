@@ -85,9 +85,12 @@ $ risset man poly
 
 ```
 
+---------------
+
+
 ## Risset commands
 
-#### update
+### update
 
 Update the local index to the latest state.
 
@@ -126,7 +129,7 @@ Install a given plugin for the current platform. Plugins are installed into
 the user folder (no administrator requirements are needed). Look at the `info`
 command to query information about the system.
 
-**Flags**:
+##### Options
 
 * `--force`: Installs a plugin even if the plugin with the same version is already installed
 
