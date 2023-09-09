@@ -94,13 +94,13 @@ Update the local index to the latest state.
     $ risset update
 
 
-#### list
+### list
 
 List all available plugins for your platform
 
     $ risset list [options]
 
-**Flags**
+#### Options
 
 * `--nameonly`: Output just the name of each plugin
 * `--installed`: List only installed plugins
@@ -109,14 +109,14 @@ List all available plugins for your platform
 * `-1, --oneline`: List each plugin in one line
 
 
-#### show
+### show
 
 Show information about a plugin
 
     $ risset show <plugin>
 
 
-#### install
+### install
 
 Install one or multiple plugins
 
@@ -133,7 +133,7 @@ command to query information about the system.
 the system folder where all other builtin plugins are installed (this requires administrator rights in some platforms). Admin rights are needed for this.
 
 
-#### remove
+### remove
 
 Remove an installed plugin
 
@@ -168,14 +168,14 @@ Generate/update documentation:
 Build the documentation for all defined plugins. This depends on **mkdocs** being installed
 
 
-#### upgrade
+### upgrade
 
     $ risset upgrade
 
 Upgrade any installed plugin to the latest version
 
 
-#### listopcodes
+### listopcodes
 
     $ risset listopcodes
 
@@ -206,7 +206,7 @@ dict_free           klib        Free a hashtable
 
 ```
 
-#### download
+### download
 
     $ risset download <plugin>
 
@@ -218,7 +218,7 @@ Download a plugin
 * `--platform`: The platform of the plugin to download (default: current platform). One of *linux*, *macos*, *window*, *macos-arm64*, *linux-arm64*
 
 
-#### info
+### info
 
     $ risset info [options]
 
