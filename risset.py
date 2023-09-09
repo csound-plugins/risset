@@ -2185,8 +2185,9 @@ class MainIndex:
         platform = _session.platformid
         csoundversion = _session.csound_version
 
-        print(f"Csound Version: {csoundversion}")
-        print()
+        if header:
+            print(f"Csound Version: {csoundversion}")
+            print()
 
         for plugin in self.plugins.values():
             data = []
@@ -2634,8 +2635,11 @@ def cmd_list(mainindex: MainIndex, args) -> bool:
             print(json.dumps(d, indent=2))
         return True
     else:
+        header = True
+        if args.oneline or args.nameonly or args.noheader:
+            header = False
         return mainindex.list_plugins(installed=args.installed, nameonly=args.nameonly, oneline=args.oneline,
-                                      upgradeable=args.upgradeable)
+                                      upgradeable=args.upgradeable, header=header)
 
 
 def cmd_show(index: MainIndex, args) -> bool:
@@ -3017,6 +3021,7 @@ def main():
     flag(list_cmd, "--installed", help="List only installed plugins")
     flag(list_cmd, "--upgradeable", help="List only installed packages which can be upgraded")
     flag(list_cmd, "--notinstalled", help="List only plugins which are not installed")
+    flag(list_cmd, "--noheader", help="Do not print any extra information")
     list_cmd.add_argument("-o", "--outfile", help="Outputs to a file")
     list_cmd.add_argument("-1", "--oneline", action="store_true", help="List each plugin in one line")
     list_cmd.set_defaults(func=cmd_list)
@@ -3110,7 +3115,8 @@ def main():
     dev_cmd.add_argument("--outfile", default=None,
                          help="Set the output file for any action generating output")
     dev_cmd.add_argument("cmd", choices=["opcodesxml", "codesign"],
-                         help="Subcommand. opcodesxml: generate xml output similar to opcodes.xml in the csound's manual")
+                         help="Subcommand. opcodesxml: generate xml output similar to opcodes.xml in the csound's manual; "
+                              "codesign: code sign all installed plugins (macos only)")
     dev_cmd.set_defaults(func=cmd_dev)
 
     args = parser.parse_args()

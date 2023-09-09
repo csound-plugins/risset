@@ -8,27 +8,34 @@ at [risset-data](https://github.com/csound-plugins/risset-data).
 
 # Installation
 
-`risset` depends only on `git` and `python3` (>= 3.9) being installed. 
+``risset` depends only on `git` and `python3` (>= 3.9) being installed.
 
 
-```
+```bash
 pip install risset
 ```
 
-or via git:
+This will install the script "risset" into your path
+
+
+### Linux
+
+In certain linux distributions it is not allowed to install packages to the
+system python. In that case the recommended way is to install risset within
+its own virtual environment. On ubuntu this can be done via `pipx`:
 
 ```bash
-git clone https://github.com/csound-plugins/risset
-cd risset
-python setup.py install
+sudo apt install pipx
+pipx install risset
 ```
 
-These commands will install the script "risset" into your path.
 
 # Quick start
 
 ```bash
+
 # list all defined packages
+
 $ risset list
 
 * else /1.10.0         | Miscellaneous plugins [installed: 1.10.0]
