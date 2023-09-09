@@ -753,7 +753,7 @@ class Plugin:
             return None
         else:
             if len(possible_binaries) > 1:
-                _debug(f"Found multiple binaries for {self.name}")
+                _debug(f"Found multiple binaries for {self.name}. Will select the first one")
             return possible_binaries[0]
 
     def available_binaries(self) -> list[str]:
@@ -1182,7 +1182,7 @@ def _normalize_version(version: str, default="0.0.0") -> str:
     try:
         versiontup = _version_tuple(version)
     except ValueError as e:
-        _debug(f"Error while parsing version {version}: %s", str(e))
+        _errormsg(f"Error while parsing version {version}: %s (Exception: {e})")
         return default
     return ".".join(str(i) for i in versiontup)
 
@@ -1917,7 +1917,7 @@ class MainIndex:
         )
         return out
 
-    def get_plugin_dll(self, plugin: Plugin, platformid: str = '') -> Path:
+    def get_plugin_dll(self, plugin: Plugin, platformid: str = '', csound_version: int = 0) -> Path:
         """
         Returns the path to the binary as defined in the manifest
 
@@ -1937,11 +1937,13 @@ class MainIndex:
         assert isinstance(plugin, Plugin)
         if not platformid:
             platformid = _session.platformid
-        bindef = plugin.find_binary(platformid=platformid)
+        if not csound_version:
+            csound_version = _session.csound_version
+        bindef = plugin.find_binary(platformid=platformid, csound_version=csound_version)
         if not bindef:
             available = ", ".join(plugin.available_binaries())
             raise PlatformNotSupportedError(
-                f"No binary defined for platform {platformid} / {_session.csound_version}."
+                f"No binary defined for platform {platformid} / {csound_version}."
                 f" Available platforms for {plugin.name}: {available}")
         # The binary defines a url / path under the "url" key. Both can be a
         # binary (a .so, .dll, .dylib file) or a .zip file. In this latter case,
@@ -2916,11 +2918,39 @@ def cmd_upgrade(idx: MainIndex, args) -> bool:
 
 def cmd_download(idx: MainIndex, args) -> bool:
     """Downloads a binary for a given plugin"""
-    path = args.path
-    if not path:
-        path = Path.cwd().as_posix()
+    outfolder = args.path
+    if not outfolder:
+        outfolder = Path.cwd().as_posix()
 
+    if not os.path.exists(outfolder):
+        _errormsg(f"download: Output folder '{outfolder}' does not exist")
+        return False
 
+    platformid = args.platform
+    if not platformid:
+        platformid = _session.platformid
+
+    plugin = idx.plugins.get(args.plugin)
+    if plugin is None:
+        pluginnames = ', '.join(idx.plugins.keys())
+        _errormsg(f"download: Unknown plugin '{args.plugin}'. Available plugins: {pluginnames}")
+        return False
+
+    dllpath = idx.get_plugin_dll(plugin=plugin, platformid=platformid)
+    if not dllpath.exists():
+        _errormsg(f"Error while downloading binary for plugin '{plugin.name}'. "
+                  f"Expected to find the binary at '{dllpath}', but the path does not exist")
+        return False
+
+    outfile = Path(outfolder) / dllpath.name
+    if outfile.exists():
+        _errormsg(f"The destination path '{outfile}' already exists.")
+        return False
+
+    shutil.move(dllpath, outfolder)
+
+    _info(f"Downloaded binary for '{plugin.name}' to '{outfile}'")
+    return True
 
 
 def _running_from_terminal() -> bool:
