@@ -93,11 +93,21 @@ Update the local index to the latest state.
 
     $ risset update
 
+
 #### list
 
 List all available plugins for your platform
 
-    $ risset list
+    $ risset list [options]
+
+**Flags**
+
+* `--nameonly`: Output just the name of each plugin
+* `--installed`: List only installed plugins
+* `--upgradeable`: List only installed packages which can be upgraded
+* `--notinstalled`: List only plugins which are not installed
+* `-1, --oneline`: List each plugin in one line
+
 
 #### show
 
@@ -110,10 +120,18 @@ Show information about a plugin
 
 Install one or multiple plugins
 
-    $ risset install <plugin> [<plugin2>, ...]
+    $ risset install [--force] <plugin> [<plugin2>, ...]
 
 Install a given plugin for the current platform. Plugins are installed into
+the user folder (no administrator requirements are needed). Look at the `info`
+command to query information about the system.
+
+**Flags**:
+
+* `--force`: Installs a plugin even if the plugin with the same version is already installed
+
 the system folder where all other builtin plugins are installed (this requires administrator rights in some platforms). Admin rights are needed for this.
+
 
 #### remove
 
@@ -121,11 +139,23 @@ Remove an installed plugin
 
     $ risset remove <plugin>
 
-#### documentation
+
+    #### documentation
 
 Open man page as markdown in the command line
 
-    $ risset man <opcode>
+
+    $ risset man [options] <opcode>
+
+
+**Options**
+
+
+* `-s, --simplepath`: Print just the path of the manual page
+* `-m, --markdown`: Use the .md page instead of the .html version
+* `-e, --external`: Open the man page in the default app. This is only used when opening the markdown man page.
+* `--html`: Opens the .html version of the manpage in the default browser (or outputs the path with the --path option)
+* `--theme {dark,light,gruvbox-dark,gruvbox-light,material,fruity,native}`: Style used when displaying markdown files (default=dark)
 
 Open the html man page in the default browser:
 
@@ -135,6 +165,73 @@ Generate/update documentation:
 
     $ risset makedocs
 
+Build the documentation for all defined plugins. This depends on **mkdocs** being installed
+
+
+#### upgrade
+
+    $ risset upgrade
+
+Upgrade any installed plugin to the latest version
+
+
+#### listopcodes
+
+    $ risset listopcodes
+
+List installed opcodes
+
+**Options**
+
+* `-l, --long`: Long format
+
+```
+$ risset listopcodes -l
+
+accum               else        Simple accumulator of scalar values
+atstop              else        Schedule an instrument at the end of the current instrument
+beadsynt            beosc       Band-Enhanced Oscillator-Bank
+beosc               beosc       Band-Enhanced Oscillator
+bisect              else        Returns the fractional index of a value within a sorted ar…ay / tab
+chuap               chua        Simulates Chua's oscillator
+crackle             else        generates noise based on a chaotic equation
+defer               poly        Run an opcode at the end of current event
+deref               else        Dereference a previously created reference to a variable
+detectsilence       else        Detect when input falls below an amplitude threshold
+dict_del            klib        Remove a key:value pair from a hashtable
+dict_dump           klib        Dumps the contents of this dict as a string
+dict_exists         klib        Returns 1 if the dict exists, 0 otherwise
+dict_free           klib        Free a hashtable
+...
+
+```
+
+#### download
+
+    $ risset download <plugin>
+
+Download a plugin
+
+**Options**
+
+* `--path PATH`: Directory to download the plugin to (default: current directory)
+* `--platform`: The platform of the plugin to download (default: current platform). One of *linux*, *macos*, *window*, *macos-arm64*, *linux-arm64*
+
+
+#### info
+
+    $ risset info [options]
+
+Outputs information about the environment as json in order to be integrated by other systems.
+For example, **CsoundQT** uses this command to read the installed plugins and their opcodes
+and documentation
+
+**Options**
+
+* `--outfile OUTFILE`: Save output to this path
+* `--full`: Include all available information
+
+-------
 
 # Plugin Documentation
 

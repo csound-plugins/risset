@@ -1468,13 +1468,27 @@ def _print_with_line_numbers(s: str) -> None:
         print(f"{i+1:003d} {line}")
 
 
-def _download_file(url: str, cache=True) -> Path:
+def _download_file(url: str, destination_folder='', cache=True) -> Path:
     """
     Download the given url. Raises RuntimeError if failed
+
+    Args:
+        url: the url to download from
+        destination_folder: if given, the folder to place the downloaded file. Defaults to
+            the temporary folder. If given, cache is disabled.
+        cache: if False, bypass the cache.
     """
-    path = _session.downloaded_files.get(url)
-    if path is not None and cache:
-        return path
+    baseoutfile = os.path.split(url)[1]
+    cachedpath = _session.downloaded_files.get(url)
+    if cachedpath is not None and cache:
+        _debug("Found file in the cache, no need to download")
+        if destination_folder:
+            destpath = Path(destination_folder) / baseoutfile
+            _debug(f"copying downloaded file '{cachedpath}' to '{destpath}'")
+            shutil.copy(cachedpath, destpath)
+            return destpath
+        else:
+            return cachedpath
     _debug("Downloading url", url)
     try:
         tmpfile, httpmsg = urllib.request.urlretrieve(url)
@@ -1483,12 +1497,15 @@ def _download_file(url: str, cache=True) -> Path:
         raise err
 
     if not os.path.exists(tmpfile):
-        raise RuntimeError(f"Error downloading file {url}")
-    baseoutfile = os.path.split(url)[1]
-    path = Path(tmpfile).parent / baseoutfile
-    shutil.move(tmpfile, path.as_posix())
-    _session.downloaded_files[url] = path
-    return path
+        raise RuntimeError(f"Error downloading url '{url}', destination file not found '{tmpfile}'")
+
+    if not destination_folder:
+        destpath = Path(tmpfile).parent / baseoutfile
+    else:
+        destpath = Path(destination_folder) / baseoutfile
+    shutil.move(tmpfile, destpath.as_posix())
+    _session.downloaded_files[url] = destpath
+    return destpath
 
 
 def default_system_plugins_path(major=6, minor=0) -> list[Path]:
@@ -1900,7 +1917,7 @@ class MainIndex:
         )
         return out
 
-    def get_plugin_dll(self, plugin: Plugin) -> Path:
+    def get_plugin_dll(self, plugin: Plugin, platformid: str = '') -> Path:
         """
         Returns the path to the binary as defined in the manifest
 
@@ -1910,17 +1927,21 @@ class MainIndex:
 
         Args:
             plugin: the plugin which defines which binary to get
+            platformid: the platform for which to get the binary. If not given, use the
+                current platform. This argument is provided to test the downloading and
+                extracting methods locally.
 
         Returns:
             the path of the binary.
         """
         assert isinstance(plugin, Plugin)
-        platform = _session.platformid
-        bindef = plugin.find_binary(platformid=platform)
+        if not platformid:
+            platformid = _session.platformid
+        bindef = plugin.find_binary(platformid=platformid)
         if not bindef:
             available = ", ".join(plugin.available_binaries())
             raise PlatformNotSupportedError(
-                f"No binary defined for platform {platform} / {_session.csound_version}."
+                f"No binary defined for platform {platformid} / {_session.csound_version}."
                 f" Available platforms for {plugin.name}: {available}")
         # The binary defines a url / path under the "url" key. Both can be a
         # binary (a .so, .dll, .dylib file) or a .zip file. In this latter case,
@@ -2893,6 +2914,15 @@ def cmd_upgrade(idx: MainIndex, args) -> bool:
     return True
 
 
+def cmd_download(idx: MainIndex, args) -> bool:
+    """Downloads a binary for a given plugin"""
+    path = args.path
+    if not path:
+        path = Path.cwd().as_posix()
+
+
+
+
 def _running_from_terminal() -> bool:
     return sys.stdin.isatty()
 
@@ -3034,6 +3064,14 @@ def main():
     upgrade_cmd = subparsers.add_parser("upgrade", help="Upgrade any installed plugin to a new version, if there"
                                                         "is one")
     upgrade_cmd.set_defaults(func=cmd_upgrade)
+
+    # download
+    download_cmd = subparsers.add_parser('download', help='Download a plugin')
+    download_cmd.add_argument('--path', help='Directory to download the plugin to (default: current directory)')
+    download_cmd.add_argument('--platform', help='The platform of the plugin to download (default: current platform)',
+                              choices=['linux', 'macos', 'window', 'macos-arm64', 'linux-arm64'])
+    download_cmd.add_argument('plugin', help='The name of the plugin to download')
+    download_cmd.set_defaults(func=cmd_download)
 
     # dev: risset dev opcodesxml
     #      risset dev codesign
