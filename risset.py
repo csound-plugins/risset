@@ -2878,7 +2878,8 @@ def cmd_info(idx: MainIndex, args) -> bool:
         lastupdate = int((time.time() - picklefile.stat().st_mtime) / 686400)
 
     d = {
-        'version': idx.version,
+        'version': __version__,
+        'index-version': idx.version,
         'pluginspath': idx.user_plugins_path.as_posix(),
         'rissetroot': RISSET_ROOT.as_posix(),
         'clonespath': RISSET_CLONES_PATH.as_posix(),
