@@ -73,6 +73,7 @@ RISSET_DATAREPO_LOCALPATH = RISSET_ROOT / "risset-data"
 RISSET_GENERATED_DOCS = RISSET_ROOT / "man"
 RISSET_CLONES_PATH = RISSET_ROOT / "clones"
 RISSET_ASSETS_PATH = RISSET_ROOT / "assets"
+RISSET_OPCODESXML = RISSET_ROOT / "opcodes.xml"
 _MAININDEX_PICKLE_FILE = RISSET_ROOT / "mainindex.pickle"
 MACOS_ENTITLEMENTS_PATH = RISSET_ASSETS_PATH / 'csoundplugins.entitlements'
 
@@ -2819,10 +2820,12 @@ def cmd_list_installed_opcodes(plugins_index: MainIndex, args) -> bool:
 def cmd_dev(idx: MainIndex, args) -> bool:
     if args.cmd == 'opcodesxml':
         outstr = idx.generate_opcodes_xml()
-        if args.outfile:
-            open(args.outfile, "w").write(outstr)
-        else:
+        outfile = args.outfile or RISSET_OPCODESXML
+        if outfile == 'stdout':
             print(outstr)
+        else:
+            open(outfile, "w").write(outstr)
+            _debug(f"Generated opcodes.xml at '{outfile}'")
     elif args.cmd == 'codesign':
         if _session.platform != 'macos':
             _errormsg(f"Code signing is only available for macos, not for '{_session.platform}'")
@@ -2853,17 +2856,16 @@ def cmd_makedocs(idx: MainIndex, args) -> bool:
             placed in RISSET_GENERATED_DOCS
     """
     outfolder = args.outfolder or RISSET_GENERATED_DOCS
-    opcodesxmlpath = RISSET_ROOT / "opcodes.xml"
 
     try:
         _generate_documentation(idx, dest=Path(outfolder), buildhtml=True, onlyinstalled=args.onlyinstalled,
-                                opcodesxml=opcodesxmlpath)
+                                opcodesxml=RISSET_OPCODESXML)
     except Exception as e:
         _errormsg(str(e))
         return False
 
     _info(f"Documentation generated in {outfolder}")
-    _info(f"Saved opcodes.xml to {opcodesxmlpath}")
+    _info(f"Saved opcodes.xml to {RISSET_OPCODESXML}")
     return True
 
 
