@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.7.2"
+__version__ = "2.7.3"
 
 import sys
 
@@ -114,6 +114,11 @@ def _macos_save_entitlements() -> Path:
     if not _session.entitlements_saved:
         with open(path, 'w') as f:
             f.write(_entitlements_str)
+        assert os.path.exists(path)
+        plutil = shutil.which('plutil')
+        if plutil:
+            _debug(f"Verifying that the entitlements file '{path}' is a valid plist")
+            subprocess.call([plutil, path])
         _session.entitlements_saved = True
     return path
 
@@ -121,13 +126,21 @@ def _macos_save_entitlements() -> Path:
 # codesign --force --sign "${SIGNATURE_ID}" --entitlements csoundplugins.entitlements "/path/to/dylib"
 
 
-def macos_codesign(dylibpaths: list[str], signature='-'):
+def macos_codesign(dylibpaths: list[str], signature='-') -> None:
+    """
+    Codesign the given library binaries using entitlements
+
+    Args:
+        dylibpaths: a list of paths to codesign
+        signature: the signature used. '-' indicates to sign it locally
+    """
     if not shutil.which('codesign'):
         raise RuntimeError("Could not find the binary 'codesign' in the path")
     entitlements_path = _macos_save_entitlements()
     assert os.path.exists(entitlements_path)
-    for path in dylibpaths:
-        subprocess.call(['codesign', '--force', '--sign', signature, '--entitlements', entitlements_path, path])
+    for dylibpath in dylibpaths:
+        subprocess.call(['codesign', '--force', '--sign', signature, '--entitlements', entitlements_path, dylibpath])
+        subprocess.call(['codesign', '--display', '--verbose', dylibpath])
 
 
 def _platform_architecture() -> str:
