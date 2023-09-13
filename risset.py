@@ -159,7 +159,7 @@ def _platform_architecture() -> str:
         elif bits == '32bit':
             return 'x86'
 
-    raise RuntimeError(f"Architecture not supported ({machine}=, {bits=}, {linkage=})")
+    raise RuntimeError(f"Architecture not supported ({machine=}, {bits=}, {linkage=})")
 
 
 def _csoundlib_version() -> tuple[int, int]:
