@@ -121,6 +121,7 @@ jobs:
           cd ..
 
       - name: macos ${{ matrix.arch }} - test install from git
+        shell: bash
         run: |
           set -x
           pip install .

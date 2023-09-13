@@ -29,7 +29,6 @@ sudo apt install pipx
 pipx install risset
 ```
 
-
 # Quick start
 
 ```bash
