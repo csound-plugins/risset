@@ -82,7 +82,10 @@ jobs:
       - name: windows - test install from git
         run: |
           $Env:Path = $Env:Path + ";C:\Program Files\csound-binaries\build\Release"
-
+          
+          
+          python -c "import platform; print('platform.machine: ', platform.machine())"
+          
           pip install .
           risset update
           risset list
