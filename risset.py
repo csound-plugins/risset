@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.7.1"
+__version__ = "2.7.2"
 
 import sys
 
@@ -121,7 +121,7 @@ def _macos_save_entitlements() -> Path:
 # codesign --force --sign "${SIGNATURE_ID}" --entitlements csoundplugins.entitlements "/path/to/dylib"
 
 
-def _macos_codesign(dylibpaths: list[str], signature='-'):
+def macos_codesign(dylibpaths: list[str], signature='-'):
     if not shutil.which('codesign'):
         raise RuntimeError("Could not find the binary 'codesign' in the path")
     entitlements_path = _macos_save_entitlements()
@@ -2087,7 +2087,7 @@ class MainIndex:
                 # try code signing the binary
                 _debug(f"The binary '{installed_path.as_posix()}' was installed but it is not recognized by csound. "
                        f"It might be a security problem. I will try to code sign it")
-                _macos_codesign([installed_path.as_posix()])
+                macos_codesign([installed_path.as_posix()])
                 if self._is_plugin_recognized_by_csound(plugin):
                     _debug("... Ok, that worked. ")
                 else:
@@ -2841,7 +2841,7 @@ def cmd_dev(idx: MainIndex, args) -> bool:
             _debug(f"Did not find any binary to sign. Plugins: {plugins}")
         else:
             _debug(f"Code signing the following plugin binaries: {dylibs}")
-            _macos_codesign(dylibs)
+            macos_codesign(dylibs)
 
     return True
 
