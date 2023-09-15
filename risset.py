@@ -51,6 +51,11 @@ class ParseError(Exception):
     """Parse error in a manifest file"""
 
 
+def _subproc_call(args: list[str], shell=False):
+    _debug("Calling subprocess: {args}")
+    return subprocess.call(args, shell=shell)
+
+
 def _data_dir_for_platform() -> Path:
     """
     Returns the data directory for the given platform
@@ -118,12 +123,11 @@ def _macos_save_entitlements() -> Path:
         plutil = shutil.which('plutil')
         if plutil:
             _debug(f"Verifying that the entitlements file '{path}' is a valid plist")
-            subprocess.call([plutil, path])
+            _subproc_call([plutil, path])
         _session.entitlements_saved = True
         _debug(f"Saved entitlements file to {path}")
-        _debug("Entitlements: ---------------\n")
-        _debug(open(path).read())
-        _debug("\n------------ end entitlements\n")
+        _debug(f"Entitlements:\n{open(path).read()}\n------------ end entitlements")
+
     return path
 
 # SIGNATURE_ID="-"
@@ -143,8 +147,9 @@ def macos_codesign(dylibpaths: list[str], signature='-') -> None:
     entitlements_path = _macos_save_entitlements()
     assert os.path.exists(entitlements_path)
     for dylibpath in dylibpaths:
-        subprocess.call(['codesign', '--force', '--sign', signature, '--entitlements', entitlements_path, dylibpath])
-        subprocess.call(['codesign', '--display', '--verbose', dylibpath])
+        _subproc_call(['codesign', '--force', '--sign', signature, '--entitlements', entitlements_path, dylibpath])
+        _debug("Verifying code signing")
+        _subproc_call(['codesign', '--display', '--verbose', dylibpath])
 
 
 def _platform_architecture() -> str:
@@ -1058,8 +1063,7 @@ def _git_clone_into(repo: str, destination: Path, depth=1) -> None:
     if depth > 0:
         args.extend(["--depth", str(depth)])
     args.extend([repo, str(destination)])
-    _debug(f"Calling git clone as: {' '.join(args)}")
-    subprocess.call(args)
+    _subproc_call(args)
 
 
 def _git_repo_needs_update(repopath: Path) -> bool:
@@ -1072,7 +1076,7 @@ def _git_repo_needs_update(repopath: Path) -> bool:
     cwd = os.path.abspath(os.path.curdir)
     os.chdir(str(repopath))
     git = _get_git_binary()
-    subprocess.call([git, "fetch"])
+    _subproc_call([git, "fetch"])
     headhash = subprocess.check_output([git, "rev-parse", "HEAD"]).decode('utf-8')
     upstreamhash = subprocess.check_output([git, "rev-parse", "master@{upstream}"]).decode('utf-8')
     _debug(f"Checking hashes, head: {headhash}, upstream: {upstreamhash}")
@@ -2142,7 +2146,7 @@ class MainIndex:
         binarydef = plugin.find_binary()
         if binarydef and binarydef.post_install_script:
             script = plugin.resolve_path(binarydef.post_install_script)
-            subprocess.call(script.as_posix(), shell=True)
+            _subproc_call(script.as_posix(), shell=True)
 
         with open(manifest_path.as_posix(), "w") as f:
             f.write(manifest_json)
@@ -2448,7 +2452,8 @@ def _is_package_installed(pkg: str) -> bool:
 def _call_mkdocs(folder: Path, *args: str) -> None:
     currentdir = os.getcwd()
     os.chdir(folder)
-    subprocess.call([sys.executable, "-m", "mkdocs"] + list(args))
+    _debug(f"Rendering docs via mkdocs. Current dir: {os.getcwd()}")
+    _subproc_call([sys.executable, "-m", "mkdocs"] + list(args))
     os.chdir(currentdir)
 
 
