@@ -1578,7 +1578,7 @@ def _system_plugins_path(majorversion=6) -> Optional[Path]:
 
     out = _find_system_plugins_path(possible_paths)
     if not out:
-        _errormsg(f"System plugins path not found! Searched paths: {possible_paths}")
+        _info(f"System plugins path not found. Searched paths: {possible_paths}")
         return None
     assert out.exists() and out.is_dir() and out.is_absolute()
     return out
