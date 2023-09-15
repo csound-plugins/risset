@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.7.7"
+__version__ = "2.7.8"
 
 import sys
 
@@ -120,6 +120,10 @@ def _macos_save_entitlements() -> Path:
             _debug(f"Verifying that the entitlements file '{path}' is a valid plist")
             subprocess.call([plutil, path])
         _session.entitlements_saved = True
+        _debug(f"Saved entitlements file to {path}")
+        _debug("Entitlements: ---------------\n")
+        _debug(open(path).read())
+        _debug("\n------------ end entitlements\n")
     return path
 
 # SIGNATURE_ID="-"
