@@ -22,7 +22,7 @@ This will install the script "risset" into your path
 
 In certain linux distributions it is not allowed to install packages to the
 system python. In that case the recommended way is to install risset within
-its own virtual environment. On ubuntu this can be done via `pipx`:
+its own virtual environment via `pipx`:
 
 ```bash
 sudo apt install pipx
@@ -266,8 +266,7 @@ If installed via `git`, go to the repository and do:
 
 In order to add/modify a plugin, clone [risset-data](https://github.com/csound-plugins/risset-data)
 
-At the root of the repository there is an index file `rissetindex.json`, listing all available
-plugins. Each entry in the index has the form
+At the root of the repository there is an index file `rissetindex.json`, with the form:
 
 ```json
 {
@@ -296,7 +295,9 @@ plugins. Each entry in the index has the form
 }
 ```
 
-The url + optional path points to a risset.json manifest file
+To add a plugin to the index, just extend the *plugins* dict. The url should point to a valid git repository,
+the path attribute can be used to indicate where risset.json manifest is within this repository. This allows to 
+define multiple plugins within one repository.
 
 ## Manifest
 
