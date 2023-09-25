@@ -134,7 +134,8 @@ jobs:
           risset dev codesign
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
-          csound -z1 2>&1 | grep dict_
+          csound -z1 2>&1 | grep atstop
+          echo "Ok..."
           csound -o test/lfnoise-macos-${{ matrix.arch }}-git.flac --format=flac test/lfnoise.csd
 
           mkdir -p artifacts
