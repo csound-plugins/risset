@@ -1,0 +1,18 @@
+container:
+  image: python:latest
+
+test_task:
+
+  macos_instance:
+    image: ghcr.io/cirruslabs/macos-ventura-xcode:latest
+
+  test_script: |
+    set -x
+    ls -l
+    python3 -c 'import platform; print(platform.machine(), platform.architecture(), platform.uname())'  # , platform.dist())'
+    brew install csound
+    python3 -m pip install .
+    risset list
+    risset install klib
+    csound -z1 2>&1 | grep dict_
+    
