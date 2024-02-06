@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.7.8"
+__version__ = "2.7.9"
 
 import sys
 
@@ -204,7 +204,7 @@ class _Session:
 
     This class keeps track of downloaded files, cloned repos, etc.
     """
-    instance: _Session = None
+    instance: _Session | None = None
 
     def __new__(cls, *args, **kwargs):
         if _Session.instance is not None:
@@ -558,7 +558,7 @@ class Binary:
     post_install_script: str = ''
     """A script to run after installation"""
 
-    _csound_version_range: _VersionRange = None
+    _csound_version_range: _VersionRange | None = None
 
     def csound_version_range(self) -> _VersionRange:
         if self._csound_version_range is None:
@@ -746,7 +746,8 @@ class Plugin:
             raise OSError(f"No doc folder found (declared as {doc_folder}")
         return doc_folder
 
-    def find_binary(self, platformid: str = None, csound_version: int = 0) -> Optional[Binary]:
+    def find_binary(self, platformid='', csound_version: int = 0
+                    ) -> Optional[Binary]:
         """
         Find a binary for the platform and csound versions given / current
 
@@ -767,7 +768,7 @@ class Plugin:
         else:
             assert isinstance(csound_version, int) and csound_version >= 6000, f"Got {csound_version}"
 
-        if platformid is None:
+        if not platformid:
             platformid = _session.platformid
 
         possible_binaries = [b for b in self.binaries
@@ -952,8 +953,8 @@ def _csound_opcodes(method='csound') -> list[str]:
         import ctcsound7
         cs = ctcsound7.Csound()
         cs.setOption("-d")  # supress displays
-        #if opcodedir:
-        #    cs.setOption(f'--opcode-dir={opcodedir}')
+        # if opcodedir:
+        #     cs.setOption(f'--opcode-dir={opcodedir}')
         opcodes, n = cs.newOpcodeList()
         opcodeNames = [opc.opname.decode('utf-8') for opc in opcodes]
         cs.disposeOpcodeList(opcodes)
@@ -1815,7 +1816,7 @@ class MainIndex:
         manifests = list(path.glob("*.json"))
         return manifests
 
-    def _is_plugin_recognized_by_csound(self, plugin: Plugin) -> bool:
+    def _is_plugin_recognized_by_csound(self, plugin: Plugin, method='csound') -> bool:
         """
         Check if a given plugin is installed
 
@@ -1826,7 +1827,7 @@ class MainIndex:
             True if the plugin is recognized by csound
         """
         test = plugin.opcodes[0]
-        opcodes = _csound_opcodes()
+        opcodes = _csound_opcodes(method=method)
         return test in opcodes
 
     def plugin_installed_path(self, plugin: Plugin) -> Optional[Path]:
@@ -1845,7 +1846,7 @@ class MainIndex:
         dll, user_installed = self.installed_path_for_dll(binfile)
         return dll
 
-    def is_plugin_installed(self, plugin: Plugin, check=True) -> bool:
+    def is_plugin_installed(self, plugin: Plugin, check=True, method='csound') -> bool:
         """
         Is the given plugin installed?
 
@@ -1856,6 +1857,11 @@ class MainIndex:
             plugin: the plugin to query
             check: if True, we check if the opcodes declared in the plugin definition
                 are actually available
+            method: one of 'csound' (check via the binary), 'ctcsound' (check via the API)
+
+        Returns:
+            True if the plugin is installed. If check, we also check that the plugin is actually
+            loaded by csound
         """
         binary = plugin.find_binary()
         if not binary:
@@ -1868,7 +1874,7 @@ class MainIndex:
         dll, user_installed = self.installed_path_for_dll(binfile)
         if dll is None:
             return False
-        return True if not check else self._is_plugin_recognized_by_csound(plugin)
+        return True if not check else self._is_plugin_recognized_by_csound(plugin, method=method)
 
     def find_manpage(self, opcode: str, markdown=True) -> Optional[Path]:
         """
@@ -2158,18 +2164,21 @@ class MainIndex:
     def list_plugins_as_dict(self, installed=False) -> dict:
         d = {}
         for plugin in self.plugins.values():
+            assert isinstance(plugin, Plugin)
             info = self.installed_plugin_info(plugin)
+            binary = plugin.find_binary()
             plugininstalled = info is not None
             if installed and not plugininstalled:
                 continue
-            plugdict: dict[str, Any] = {}
-            plugdict['version'] = plugin.version
+            plugdict: dict[str, Any] = {'version': plugin.version}
             if info:
                 plugdict['installed'] = True
                 plugdict['installed-version'] = info.versionstr
                 plugdict['path'] = info.dllpath.as_posix()
             else:
                 plugdict['installed'] = False
+                plugdict['available'] = binary is not None
+
             plugdict['opcodes'] = plugin.opcodes
             plugdict['url'] = plugin.url
             plugdict['short_description'] = plugin.short_description
@@ -2179,7 +2188,7 @@ class MainIndex:
         return d
 
     def available_plugins(self, platformid: str = '', csound_version: int = 0, installed_only=False,
-                          not_installed_only=False
+                          not_installed_only=False, method='csound', check=True
                           ) -> list[Plugin]:
         if not platformid:
             platformid = _session.platformid
@@ -2190,9 +2199,9 @@ class MainIndex:
         plugins = []
         for plugin in self.plugins.values():
             if plugin.find_binary(platformid=platformid, csound_version=csound_version):
-                if installed_only and not self.is_plugin_installed(plugin):
+                if installed_only and not self.is_plugin_installed(plugin, check=check, method=method):
                     continue
-                elif not_installed_only and self.is_plugin_installed(plugin):
+                elif not_installed_only and self.is_plugin_installed(plugin, check=check, method=method):
                     continue
                 plugins.append(plugin)
         return plugins
@@ -2854,7 +2863,7 @@ def cmd_dev(idx: MainIndex, args) -> bool:
         if _session.platform != 'macos':
             _errormsg(f"Code signing is only available for macos, not for '{_session.platform}'")
             return False
-        plugins = idx.available_plugins(installed_only=True)
+        plugins = idx.available_plugins(installed_only=True, check=False)
         dylibs = []
         for plugin in plugins:
             info = idx.installed_plugin_info(plugin)
