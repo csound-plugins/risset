@@ -22,16 +22,21 @@ jobs:
 
       - name: linux - test install from git
         run: |
+          set -x
           pip install .
           risset update
           risset list
+          echo "Installing some plugins (klib, else)"
           risset install klib else
           echo "-------------------------------"
-          echo "Checking that the plugin is installed and recognized by csound"
+          echo "Checking that the plugins are installed and recognized by csound"
           csound -z1 2>&1 | grep dict_
+
+          echo "Checking that the plugins are functional"
           csound -o test/lfnoise-linux-git.flac --format=flac test/lfnoise.csd
           cp test/*.flac artifacts
 
+          echo "Uninstalling risset"
           risset remove klib else
           pip uninstall --yes risset
 
@@ -83,16 +88,18 @@ jobs:
         run: |
           $Env:Path = $Env:Path + ";C:\Program Files\csound-binaries\build\Release"
           
-          
           python -c "import platform; print('platform.machine: ', platform.machine())"
           
           pip install .
           risset update
           risset list
-          risset install klib
+          risset install klib else
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
-          csound -z1
+          csound -z1 | Select-String "dict"
+
+          csound -o test/lfnoise-linux-pip.flac --format=flac test/lfnoise.csd
+
           risset remove klib
           pip uninstall --yes risset
 
@@ -134,8 +141,10 @@ jobs:
           risset dev codesign
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
-          csound -z1 2>&1 | grep atstop
+          csound -z1 2>&1 | grep dict_
+
           echo "Ok..."
+
           csound -o test/lfnoise-macos-${{ matrix.arch }}-git.flac --format=flac test/lfnoise.csd
 
           mkdir -p artifacts

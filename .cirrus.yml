@@ -9,10 +9,10 @@ test_task:
   test_script: |
     set -x
     ls -l
-    python3 -c 'import platform; print(platform.machine(), platform.architecture(), platform.uname())'  # , platform.dist())'
     brew install csound
     python3 -m pip install .
     risset list
     risset install klib
     csound -z1 2>&1 | grep dict_
-    
+
+    csound -o test/lfnoise-macos-${{ matrix.arch }}-git.flac --format=flac test/lfnoise.csd
