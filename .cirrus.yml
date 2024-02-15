@@ -14,7 +14,7 @@ test_task:
     risset list
     risset install klib
 
-    csound -o test/lfnoise-macos-${{ matrix.arch }}-git.flac --format=flac test/lfnoise.csd
+    csound -o test/lfnoise-macos-arm64-git.flac --format=flac test/lfnoise.csd
 
     ls test/*.flac
 
