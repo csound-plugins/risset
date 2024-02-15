@@ -13,6 +13,10 @@ test_task:
     python3 -m pip install .
     risset list
     risset install klib
-    csound -z1 2>&1 | grep dict_
 
     csound -o test/lfnoise-macos-${{ matrix.arch }}-git.flac --format=flac test/lfnoise.csd
+
+    ls test/*.flac
+
+    csound -z1 2>&1 | grep dict_
+
