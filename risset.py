@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.7.9"
+__version__ = "2.8.0"
 
 import sys
 

@@ -20,7 +20,8 @@ test_task:
 
     csound -z1 2>&1 | grep dict_ || true    # csound exits this with 1...
 
-    risset download poly beosc
+    risset download poly
+    risset download beosc
     ls -l *.dylib
 
     risset show else
