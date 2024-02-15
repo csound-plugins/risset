@@ -26,7 +26,8 @@ setup(
     install_requires=[
         'pygments',
         'ctcsound7>=0.3.0',
-        'mkdocs'
+        'mkdocs',
+        'requests'
     ],
 
     entry_points={

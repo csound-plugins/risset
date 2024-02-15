@@ -18,7 +18,6 @@ import os
 import stat
 import argparse
 import json
-from dataclasses import dataclass, asdict as _asdict
 import tempfile
 import shutil
 import subprocess
@@ -26,7 +25,9 @@ import textwrap
 import fnmatch
 import pprint
 import platform
+from dataclasses import dataclass, asdict as _asdict
 
+import requests
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -44,8 +45,10 @@ if TYPE_CHECKING:
 class PlatformNotSupportedError(Exception):
     """Raised when the current platform is not supported"""
 
+
 class SchemaError(Exception):
     """An entity (a dict, a json file) does not fulfill the needed schema"""
+
 
 class ParseError(Exception):
     """Parse error in a manifest file"""
@@ -1493,6 +1496,26 @@ def _print_with_line_numbers(s: str) -> None:
         print(f"{i+1:003d} {line}")
 
 
+def _filename_from_content_disposition(cd: str) -> str:
+    """
+    Get filename from content-disposition
+
+    Via: https://www.codementor.io/@aviaryan/downloading-files-from-urls-in-python-77q3bs0un
+
+    Args:
+        cd: content disposition
+
+    Returns:
+        the filename or an empty string
+    """
+    if not cd:
+        return ''
+    fname = re.findall('filename=(.+)', cd)
+    if len(fname) == 0:
+        return ''
+    return fname[0]
+
+
 def _download_file(url: str, destination_folder='', cache=True) -> Path:
     """
     Download the given url. Raises RuntimeError if failed
@@ -1509,26 +1532,30 @@ def _download_file(url: str, destination_folder='', cache=True) -> Path:
         _debug("Found file in the cache, no need to download")
         if destination_folder:
             destpath = Path(destination_folder) / baseoutfile
-            _debug(f"copying downloaded file '{cachedpath}' to '{destpath}'")
+            _debug(f"Copying cached downloaded file '{cachedpath}' to '{destpath}'")
             shutil.copy(cachedpath, destpath)
             return destpath
         else:
             return cachedpath
     _debug("Downloading url", url)
     try:
-        tmpfile, httpmsg = urllib.request.urlretrieve(url)
-    except urllib.error.HTTPError as err:
-        _errormsg(f"Error while trying to download url: {url}")
+        resp = requests.get(url, verify=True, allow_redirects=True)
+        contentdisp_filename = _filename_from_content_disposition(resp.headers.get('content-disposition'))
+        if contentdisp_filename:
+            baseoutfile = contentdisp_filename
+
+    except requests.ConnectionError as err:
+        _errormsg(f"Connection error while trying to download url: '{url}'")
+        raise err
+    except Exception as err:
+        _errormsg(f"Unknown exception while trying to download url: '{url}'")
         raise err
 
-    if not os.path.exists(tmpfile):
-        raise RuntimeError(f"Error downloading url '{url}', destination file not found '{tmpfile}'")
-
     if not destination_folder:
-        destpath = Path(tmpfile).parent / baseoutfile
-    else:
-        destpath = Path(destination_folder) / baseoutfile
-    shutil.move(tmpfile, destpath.as_posix())
+        destination_folder = tempfile.gettempdir()
+    destpath = Path(destination_folder) / baseoutfile
+    _debug(f"Writing downloaded content from url '{url}' to file '{destpath}'")
+    open(destpath, 'wb').write(resp.content)
     _session.downloaded_files[url] = destpath
     return destpath
 
@@ -2989,7 +3016,7 @@ def cmd_download(idx: MainIndex, args) -> bool:
 
     shutil.move(dllpath, outfolder)
 
-    _info(f"Downloaded binary for '{plugin.name}' to '{outfile}'")
+    _info(f"Downloaded binary for plugin '{plugin.name}' to '{outfile}'")
     return True
 
 
