@@ -18,5 +18,12 @@ test_task:
 
     ls test/*.flac
 
-    csound -z1 2>&1 | grep dict_
+    csound -z1 2>&1 | grep dict_ || true    # csound exits this with 1...
 
+    risset download poly beosc
+    ls -l *.dylib
+
+    risset show else
+    risset man mtro
+    risset info --full
+    risset makedocs

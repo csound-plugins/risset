@@ -36,6 +36,11 @@ jobs:
           csound -o test/lfnoise-linux-git.flac --format=flac test/lfnoise.csd
           cp test/*.flac artifacts
 
+          risset show else
+          risset man mtro
+          risset info --full
+          risset makedocs
+
           echo "Uninstalling risset"
           risset remove klib else
           pip uninstall --yes risset
@@ -45,14 +50,19 @@ jobs:
           pip install risset -U
           risset update
           risset list
-          risset install else
+          risset install else klib
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep atstop
           csound -o test/lfnoise-linux-pip.flac --format=flac test/lfnoise.csd
           cp test/*.flac artifacts
 
-          risset remove else
+          risset show else
+          risset man mtro
+          risset info --full
+          risset makedocs
+
+          risset remove else klib
           pip uninstall --yes risset
 
       - uses: actions/upload-artifact@v3
@@ -100,7 +110,12 @@ jobs:
 
           csound -o test/lfnoise-linux-pip.flac --format=flac test/lfnoise.csd
 
-          risset remove klib
+          risset show else
+          risset man mtro
+          risset info --full
+          risset makedocs
+
+          risset remove klib else
           pip uninstall --yes risset
 
   testmacos:
@@ -153,9 +168,10 @@ jobs:
           mkdir -p artifacts
           cp test/*.flac artifacts
 
-          brew install jq
           risset show else
-          file $(risset info | jq -r .pluginspath)/*.dylib
+          risset man mtro
+          risset info --full
+          risset makedocs
 
           risset remove klib else
           pip uninstall --yes risset
@@ -174,6 +190,11 @@ jobs:
 
           mkdir -p artifacts
           cp test/*.flac artifacts
+
+          risset show else
+          risset man mtro
+          risset info --full
+          risset makedocs
 
           risset remove else
           pip uninstall --yes risset
