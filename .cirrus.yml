@@ -12,7 +12,7 @@ test_task:
     brew install csound
     python3 -m pip install .
     risset list
-    risset install klib
+    risset install klib else
 
     csound -o test/lfnoise-macos-arm64-git.flac --format=flac test/lfnoise.csd
 
