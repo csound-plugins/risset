@@ -144,7 +144,7 @@ jobs:
 
           csound --version
           # csound -z1 2>&1 | grep dict_
-          csound -z1
+          csound -z1 || true   # csound exits with 1 if there is some warning, so silence that
 
           echo "Ok..."
 
