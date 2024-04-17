@@ -16,7 +16,7 @@ jobs:
 
       - name: install csound
         run: |
-          sudo apt install csound csound libcsnd-dev
+          sudo apt install csound libcsnd-dev
           csound --version
           mkdir -p artifacts
 
@@ -24,6 +24,7 @@ jobs:
         run: |
           set -x
           pip install .
+          echo "Risset version: $(risset --version)"
           risset update
           risset list
           echo "Installing some plugins (klib, else)"
@@ -47,7 +48,9 @@ jobs:
 
       - name: test install from pip
         run: |
+          echo "******************* Test install from pip in linux **********************"
           pip install risset -U
+          echo "Risset version: $(risset --version)"
           risset update
           risset list
           risset install else klib
