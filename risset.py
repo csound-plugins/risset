@@ -89,9 +89,9 @@ UNKNOWN_VERSION = "Unknown"
 
 
 _supported_platforms = {
-    'macos',
-    'linux',
-    'windows',
+    'macos-x86_64',
+    'linux-x86_64',
+    'windows-x86_64',
     'macos-arm64',
     'linux-arm64'
 }
@@ -155,7 +155,35 @@ def macos_codesign(dylibpaths: list[str], signature='-') -> None:
         _subproc_call(['codesign', '--display', '--verbose', dylibpath])
 
 
+def _normalize_platform(s: str) -> str:
+    """
+    Normalizes platform definition as used in risset.json
+
+    Handles the case where, for compatibility reasons, the
+    architecture might be missing, so this function resolves,
+    for example, 'windows' to 'windows-x86_64'.
+
+    Otherwise the platform definition should consist of a pair <os>-<arch>,
+    like "macos-arm64" or "linux-x86_64"
+
+    Raises ValueError if the platform is not supported
+    """
+    if s in _supported_platforms:
+        return s
+
+    if s in ('macos', 'windows', 'linux'):
+        return s + '-x86_64'
+
+    raise ValueError(f"Unknown platform '{s}'")
+
+
 def _platform_architecture() -> str:
+    """
+    Returns the architecture for this platform
+
+    The architecture is one of 'x86_64' (intel, 64bits),
+    'x86' (intel, 32bits), 'arm64' (arm 64bits) or 'arm32' (arm 32bits)
+    """
     machine = platform.machine().lower()
     bits, linkage = platform.architecture()
     if machine == 'arm':
@@ -177,6 +205,10 @@ def _platform_architecture() -> str:
 
 
 def _csoundlib_version() -> tuple[int, int]:
+    """Returns a tuple (major, minor) using the csound api
+
+    This version can differ from the version of the installed csound binary
+    """
     import ctcsound7
     versionid = ctcsound7.libcsound.csoundGetVersion()
     major = versionid // 1000
@@ -229,7 +261,7 @@ class _Session:
         self.architecture = _platform_architecture()
 
         self.platformid = self._platform_id()
-        """One of 'linux', 'windows', 'macos' (if x86_64), or their 'arm64' variant: macos-arm64, linux-arm64, ..."""
+        """The pair <os>-<arch> (linux-x86_64, windows-x86_64, macos-arm64, etc"""
 
         self.debug = False
         major, minor = _csoundlib_version()
@@ -243,10 +275,7 @@ class _Session:
         Returns one of 'linux', 'windows', 'macos' (intel x86_64) or their 'arm64' variant:
         'macos-arm64', 'linux-arm64', etc.
         """
-        if self.architecture == 'x86_64':
-            return self.platform
-        else:
-            return f'{self.platform}-{self.architecture}'
+        return f'{self.platform}-{self.architecture}'
 
 
 _session = _Session()
@@ -352,8 +381,6 @@ def _abbrev(s: str, maxlen: int) -> str:
         return s
     rightlen = min(8, l // 5)
     return f"{s[:l - rightlen - 1]}…{s[-rightlen:]}"
-
-
 
 
 def _mainindex_retrieve(days_threshold=10) -> Optional[MainIndex]:
@@ -543,8 +570,9 @@ class Binary:
     platform: str
     """The platform for which this binary was compiled. 
     
-    One of linux, linux-arm64, macos, macos-arm64, window
-    See _supported_platforms for an up-to-date list"""
+    A pair <os>-<arch>, where os is one of linux, windows, macos, and 
+    arch is one of 'x86_64', 'arm64'. See _supported_platforms for an 
+    up-to-date list"""
 
     url: str
     """The url of the binary (can be a zip file)"""
@@ -562,6 +590,9 @@ class Binary:
     """A script to run after installation"""
 
     _csound_version_range: _VersionRange | None = None
+
+    def __post_init__(self):
+        assert self.platform in _supported_platforms, f"Invalid platform '{self.platform}'"
 
     def csound_version_range(self) -> _VersionRange:
         if self._csound_version_range is None:
@@ -820,7 +851,6 @@ class InstalledPluginInfo:
     @property
     def versiontuple(self) -> tuple[int, int, int]:
         return _version_tuple(self.versionstr) if self.versionstr and self.versionstr != UNKNOWN_VERSION else (0, 0, 0)
-
 
 
 def _main_repository_path() -> Path:
@@ -1229,16 +1259,20 @@ def _parse_binarydef(binarydef: dict, substitutions: dict[str, str]) -> Binary:
 
     A binary definition has the form
 
-    "platform": {
+    {   "platform": str,
         "url": str,
         "build_platform": str,
         "extractpath": str (optional)
     }
 
+    * platform: one of 'linux', 'windows', 'macos', optionally followed by the architecture,
+        separated by a '-' sign. Possible architectures: 'x86_64', 'arm64'. In all linux, windows and macos
+        the default architecture is 'x86_64'.
     * url: the url where to download the binary. It can be an url to the binary itself, to a .zip file,
         or to a git repository
-    * build_platform: the platform where the given binary was built. This serves as reference for
-        a user. For example, in linux a build platform might be "Ubuntu 20.04"
+    * build_platform: optional information about the platform where the given binary was built. This serves as
+        reference for a user. For example, in linux a build platform might be "Ubuntu 20.04". This normally marks
+        the lower bound for compatibility.
     * extractpath: if the case where the url does not point to a binary, extractpath should be used
         to indicate the location of the binary within the .zip file or within the git repository
     """
@@ -1247,7 +1281,9 @@ def _parse_binarydef(binarydef: dict, substitutions: dict[str, str]) -> Binary:
     if not platform:
         raise ParseError(f"Plugin binary should have a platform key. Binary definition: {binarydef}")
 
-    if platform not in _supported_platforms:
+    try:
+        platform = _normalize_platform(platform)
+    except ValueError as err:
         raise ParseError(f"Platform '{platform}' not supported. "
                          f"Possible platforms are {_supported_platforms}")
 
@@ -2236,6 +2272,9 @@ class MainIndex:
     def list_plugins(self, installed=False, nameonly=False, leftcolwidth=20,
                      oneline=False, upgradeable=False, header=True
                      ) -> bool:
+        """
+        Print a list of the installed plugins
+        """
         width, height = _termsize()
         descr_max_width = width - 36
 
