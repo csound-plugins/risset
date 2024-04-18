@@ -5,8 +5,8 @@ __version__ = "2.9.0"
 
 import sys
 
-if (sys.version_info.major, sys.version_info.minor) < (3, 8):
-    print("Python 3.8 or higher is needed", file=sys.stderr)
+if (sys.version_info.major, sys.version_info.minor) < (3, 9):
+    print("Python 3.9 or higher is needed", file=sys.stderr)
     sys.exit(-1)
 
 if len(sys.argv) >= 2 and (sys.argv[1] == "--version" or sys.argv[1] == "-v"):
@@ -39,7 +39,7 @@ from string import Template as _Template
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from typing import Union, Optional, Any
+    from typing import Any
 
 
 class PlatformNotSupportedError(Exception):
@@ -54,8 +54,10 @@ class ParseError(Exception):
     """Parse error in a manifest file"""
 
 
-def _subproc_call(args: list[str], shell=False):
-    _debug("Calling subprocess: {args}")
+def _subproc_call(args: list[str] | str, shell: bool | None = None):
+    if shell is None:
+        shell = isinstance(args, str)
+    _debug(f"Calling subprocess with shell={shell}: {args}")
     return subprocess.call(args, shell=shell)
 
 
@@ -216,7 +218,16 @@ def _csoundlib_version() -> tuple[int, int]:
     return major, minor
 
 
-def _csound_version(csoundexe='csound') -> tuple[int, int]:
+def _csound_version(csoundexe='csound') -> tuple[int, int, str]:
+    """
+    Query the csound version via the executable
+
+    Args:
+        csoundexe: the csound executable
+
+    Returns:
+        a tuple (major: int, minor: int, rest: str)
+    """
     csound_bin = _get_csound_binary(csoundexe)
     if not csound_bin:
         raise OSError("csound binary not found")
@@ -229,7 +240,7 @@ def _csound_version(csoundexe='csound') -> tuple[int, int]:
             major = int(match.group(1))
             minor = int(match.group(2))
             rest = match.group(3)
-            return major, minor
+            return major, minor, rest
     raise ValueError("Could not find a version number in the output")
 
 
@@ -326,7 +337,8 @@ def _termsize(width=80, height=25) -> tuple[int, int]:
     try:
         t = os.get_terminal_size()
         return t.columns, t.lines
-    except:
+    except Exception:
+        _debug(f"Could not determine terminal size, using default values {width=}, {height=}")
         return width, height
 
 
@@ -376,14 +388,14 @@ def _parse_version(versionstr: str) -> _VersionRange:
 def _abbrev(s: str, maxlen: int) -> str:
     """Abbreviate string"""
     assert maxlen > 18
-    l = len(s)
-    if l < maxlen:
+    lens = len(s)
+    if lens < maxlen:
         return s
-    rightlen = min(8, l // 5)
-    return f"{s[:l - rightlen - 1]}…{s[-rightlen:]}"
+    rightlen = min(8, lens // 5)
+    return f"{s[:lens - rightlen - 1]}…{s[-rightlen:]}"
 
 
-def _mainindex_retrieve(days_threshold=10) -> Optional[MainIndex]:
+def _mainindex_retrieve(days_threshold=10) -> MainIndex | None:
     """
     Try to retrieve a previously pickled mainindex
     """
@@ -406,7 +418,7 @@ def _mainindex_retrieve(days_threshold=10) -> Optional[MainIndex]:
         return None
 
 
-def _is_git_repo(path: Union[str, Path]) -> bool:
+def _is_git_repo(path: str | Path) -> bool:
     """
     If `path` a valid git repo?
     """
@@ -672,10 +684,12 @@ class IndexItem:
             plugin = _read_plugindef(manifest.as_posix(), url=self.url,
                                      manifest_relative_path=self.path)
         except Exception as e:
+            _errormsg(f"Could not read manifest '{manifest.as_posix()}', error: '{e}'. "
+                      f"I will update the index and try again")
             self.update()
             plugin = _read_plugindef(manifest.as_posix(), url=self.url,
                                      manifest_relative_path=self.path)
-
+            _info("... ok, that worked")
         plugin.cloned_path = _git_local_path(self.url)
         return plugin
 
@@ -725,7 +739,7 @@ class Plugin:
     manifest_relative_path: str = ''
     long_description: str = ''
     doc_folder: str = 'doc'
-    assets: Optional[list[Asset]] = None
+    assets: list[Asset] | None = None
 
     def __post_init__(self):
         assert isinstance(self.binaries, list)
@@ -751,7 +765,7 @@ class Plugin:
         d = _asdict(self)
         return d
 
-    def manpage(self, opcode: str) -> Optional[Path]:
+    def manpage(self, opcode: str) -> Path | None:
         """
         Returns the path to the man page for opcode
         """
@@ -759,7 +773,7 @@ class Plugin:
         path = self.resolve_doc_folder() / markdownfile
         return path if path.exists() else None
 
-    def resolve_path(self, relpath: Union[Path, str]) -> Path:
+    def resolve_path(self, relpath: Path | str) -> Path:
         """
         Returns the absolute path relative to the manifest path of this plugin
         """
@@ -781,7 +795,7 @@ class Plugin:
         return doc_folder
 
     def find_binary(self, platformid='', csound_version: int = 0
-                    ) -> Optional[Binary]:
+                    ) -> Binary | None:
         """
         Find a binary for the platform and csound versions given / current
 
@@ -825,7 +839,7 @@ class Plugin:
 class Opcode:
     name: str
     plugin: str
-    syntaxes: Optional[list[str]] = None
+    syntaxes: list[str] | None = None
     abstract: str = ''
     installed: bool = True
 
@@ -844,8 +858,8 @@ class InstalledPluginInfo:
     """
     name: str
     dllpath: Path
-    versionstr: Optional[str]
-    installed_manifest_path: Optional[Path] = None
+    versionstr: str | None
+    installed_manifest_path: Path | None = None
     installed_in_system_folder: bool = False
 
     @property
@@ -891,7 +905,11 @@ def _is_glob(s: str) -> bool:
     return "*" in s or "?" in s
 
 
-def _zip_extract_folder(zipfile: Path, folder: str, cleanup=True, destroot: Path = None) -> Path:
+def _zip_extract_folder(zipfile: Path,
+                        folder: str,
+                        cleanup=True,
+                        destroot: Path | None = None
+                        ) -> Path:
     foldername = os.path.split(folder)[1]
     root = Path(tempfile.mktemp())
     root.mkdir(parents=True, exist_ok=True)
@@ -992,6 +1010,8 @@ def _csound_opcodes(method='csound') -> list[str]:
         opcodeNames = [opc.opname.decode('utf-8') for opc in opcodes]
         cs.disposeOpcodeList(opcodes)
         return opcodeNames
+    else:
+        raise ValueError(f"Method '{method}' unknown, possible methods: 'csound', 'ctcsound'")
 
 
 def _plugin_extension() -> str:
@@ -1009,7 +1029,7 @@ def _get_path_separator() -> str:
     return ":"
 
 
-def _get_shell() -> Optional[str]:
+def _get_shell() -> str | None:
     """
     Returns one of "bash", "zsh", "fish"
 
@@ -1027,7 +1047,7 @@ def _get_shell() -> Optional[str]:
     return None
 
 
-def _get_csound_binary(binary) -> Optional[str]:
+def _get_csound_binary(binary) -> str | None:
     if (out := _session.cache.get('csound-bin', _UNSET)) is _UNSET:
         path = shutil.which(binary)
         _session.cache['csound-bin'] = out = path if path else None
@@ -1162,7 +1182,7 @@ def _version_tuple(versionstr: str) -> tuple[int, int, int]:
     return i1, i2, i3
 
 
-def _find_system_plugins_path(possible_paths: list[Path]) -> Optional[Path]:
+def _find_system_plugins_path(possible_paths: list[Path]) -> Path | None:
     """
     Given a list of possible paths, find the folder where the system plugins are installed
     """
@@ -1285,7 +1305,8 @@ def _parse_binarydef(binarydef: dict, substitutions: dict[str, str]) -> Binary:
         platform = _normalize_platform(platform)
     except ValueError as err:
         raise ParseError(f"Platform '{platform}' not supported. "
-                         f"Possible platforms are {_supported_platforms}")
+                         f"Possible platforms are {_supported_platforms}. "
+                         f"Original error: {err}")
 
     url = binarydef.get('url')
     if not url:
@@ -1391,8 +1412,8 @@ def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
     )
 
 
-def _resolve_path(path: Union[str, Path],
-                  basedir: Union[str, Path, None] = None
+def _resolve_path(path: str | Path,
+                  basedir: str | Path | None = None
                   ) -> Path:
     """
     Convert path to absolute, use `basedir` or the cwd as base
@@ -1443,7 +1464,7 @@ def _copy_recursive(src: Path, dest: Path) -> None:
         shutil.copy(src.as_posix(), dest.as_posix())
 
 
-def _read_plugindef(filepath: Union[str, Path],
+def _read_plugindef(filepath: str | Path,
                     url: str = '',
                     manifest_relative_path: str = ''
                     ) -> Plugin:
@@ -1497,7 +1518,8 @@ def _normalize_path(path: str) -> str:
     return path
 
 
-def _make_install_manifest(plugin: Plugin, assetfiles: list[str] = None) -> dict:
+def _make_install_manifest(plugin: Plugin, assetfiles: list[str] | None = None
+                           ) -> dict:
     """
     Create an installation manifest dict
 
@@ -1623,14 +1645,17 @@ def default_system_plugins_path(major=6, minor=0) -> list[Path]:
         ]
     elif platform == "windows":
         possible_dirs = [f"C:\\Program Files\\Csound{major}_x64\\plugins64"]
-        pathfolders = os.getenv('PATH').split(os.pathsep)
+        path = os.getenv('PATH')
+        if path is None:
+            raise RuntimeError("Could not determine the value of the PATH env variable")
+        pathfolders = path.split(os.pathsep)
         possible_dirs += pathfolders
     else:
         raise PlatformNotSupportedError(f"Platform {platform} not supported")
     return [Path(p).absolute() for p in possible_dirs]
 
 
-def system_plugins_path() -> Optional[Path]:
+def system_plugins_path() -> Path | None:
     """
     Get the path were system plugins are installed.
     """
@@ -1640,7 +1665,7 @@ def system_plugins_path() -> Optional[Path]:
     return out
 
 
-def _system_plugins_path(majorversion=6) -> Optional[Path]:
+def _system_plugins_path(majorversion=6) -> Path | None:
     # first check if the user has set OPCODE6DIR64
     opcode6dir64 = os.getenv(f"OPCODE{majorversion}DIR64")
     if opcode6dir64:
@@ -1682,7 +1707,10 @@ class MainIndex:
     """
     This class holds risset's main index
     """
-    def __init__(self, datarepo: Path = None, update=False, majorversion: Optional[int] = None):
+    def __init__(self,
+                 datarepo: Path | None = None,
+                 update=False,
+                 majorversion: int | None = None):
         """
         Args:
             datarepo: the local path to clone the git main index repository to
@@ -1785,7 +1813,11 @@ class MainIndex:
         self._parse_index(updateindex=True, updateplugins=True, stop_on_errors=_session.stop_on_errors)
         self.serialize()
 
-    def build_documentation(self, dest: Path = None, buildhtml=True,  onlyinstalled=False) -> Path:
+    def build_documentation(self,
+                            dest: Path | None = None,
+                            buildhtml=True,
+                            onlyinstalled=False
+                            ) -> Path:
         """
         Build the documentation for the plugins indexed
 
@@ -1836,7 +1868,7 @@ class MainIndex:
             db[dll.name] = (dll, False)
         return db
 
-    def installed_path_for_dll(self, binary: str) -> tuple[Optional[Path], bool]:
+    def installed_path_for_dll(self, binary: str) -> tuple[Path | None, bool]:
         """
         Get the installed path for a given plugin binary
 
@@ -1893,7 +1925,7 @@ class MainIndex:
         opcodes = _csound_opcodes(method=method)
         return test in opcodes
 
-    def plugin_installed_path(self, plugin: Plugin) -> Optional[Path]:
+    def plugin_installed_path(self, plugin: Plugin) -> Path | None:
         """
         Returns the path to the plugin's dll
 
@@ -1939,7 +1971,7 @@ class MainIndex:
             return False
         return True if not check else self._is_plugin_recognized_by_csound(plugin, method=method)
 
-    def find_manpage(self, opcode: str, markdown=True) -> Optional[Path]:
+    def find_manpage(self, opcode: str, markdown=True) -> Path | None:
         """
         Find the man page for the given opcode
 
@@ -1968,7 +2000,7 @@ class MainIndex:
             _errormsg(f"Opcode {opcode} not found")
             return None
 
-    def installed_plugin_info(self, plugin: Plugin) -> Optional[InstalledPluginInfo]:
+    def installed_plugin_info(self, plugin: Plugin) -> InstalledPluginInfo | None:
         """
         Returns an InstalledPluginInfo if found, None otherwise
         """
@@ -1995,7 +2027,8 @@ class MainIndex:
                 try:
                     result = _load_installation_manifest(manifest)
                 except Exception as e:
-                    _errormsg(f"Could not load installation manifest for plugin {plugin.name}, skipping")
+                    _errormsg(f"Could not load installation manifest for plugin {plugin.name}, skipping. "
+                              f"Original error: {e}")
                     continue
                 installed_version = result['version']
                 installed_manifest_path = manifest
@@ -2010,7 +2043,8 @@ class MainIndex:
         )
         return out
 
-    def get_plugin_dll(self, plugin: Plugin, platformid: str = '', csound_version: int = 0) -> Path:
+    def get_plugin_dll(self, plugin: Plugin, platformid: str = '', csound_version: int = 0
+                       ) -> Path:
         """
         Returns the path to the binary as defined in the manifest
 
@@ -2023,6 +2057,7 @@ class MainIndex:
             platformid: the platform for which to get the binary. If not given, use the
                 current platform. This argument is provided to test the downloading and
                 extracting methods locally.
+            csound_version: the csound version to find a plugin dll for.
 
         Returns:
             the path of the binary.
@@ -2082,7 +2117,7 @@ class MainIndex:
         self._cache['opcodes_by_name'] = out
         return out
 
-    def parse_manpage(self, opcode: str) -> Optional[ManPage]:
+    def parse_manpage(self, opcode: str) -> ManPage | None:
         """
         Parse the manual page for a given opcode
 
@@ -2116,14 +2151,15 @@ class MainIndex:
         self._cache['defined_opcodes'] = opcodes
         return opcodes
 
-    def serialize(self, outfile: Union[str, Path] = _MAININDEX_PICKLE_FILE) -> None:
+    def serialize(self, outfile: str | Path = _MAININDEX_PICKLE_FILE
+                  ) -> None:
         import pickle
         # Populate cache
         _ = self.opcodes_by_name()
         _ = self.installed_dlls()
         pickle.dump(self, open(outfile, 'wb'))
 
-    def install_plugin(self, plugin: Plugin, check=False) -> Optional[ErrorMsg]:
+    def install_plugin(self, plugin: Plugin, check=False) -> ErrorMsg | None:
         """
         Install the given plugin
 
@@ -2355,7 +2391,8 @@ class MainIndex:
               f"Version       : {plugdef.version} \n"
               )
         if info:
-            manifest = info.installed_manifest_path.as_posix() if info.installed_manifest_path else 'No manifest (installed manually)'
+            manifest = (info.installed_manifest_path.as_posix() if info.installed_manifest_path
+                        else 'No manifest (installed manually)')
             print(f"Installed     : {info.versionstr} (path: {info.dllpath.as_posix()}) \n"
                   f"Manifest      : {manifest}")
         print(f"Abstract      : {plugdef.short_description}")
@@ -2423,7 +2460,8 @@ class MainIndex:
                         os.remove(assetfullpath)
                 remainingassets = list(assetsfolder.glob("*"))
                 if remainingassets:
-                    _info(f"There are remaining assets in the folder {assetsfolder}: {', '.join(p.as_posix() for p in remainingassets)}")
+                    _info(f"There are remaining assets in the folder {assetsfolder}: "
+                          f"{', '.join(p.as_posix() for p in remainingassets)}")
                     _info("... They will be removed")
                 _rm_dir(assetsfolder)
             os.remove(manifestpath.as_posix())
@@ -2477,7 +2515,7 @@ class MainIndex:
           ...
         </opcodes>
         """
-        lines =  []
+        lines = []
         indentwidth = 2
 
         def _(s, indent=0):
@@ -2536,9 +2574,11 @@ def _is_mkdocs_installed() -> bool:
     return _is_package_installed("mkdocs") or shutil.which("mkdocs") is not None
 
 
-def _generate_documentation(index: MainIndex, dest: Path = None,
-                            buildhtml=True, onlyinstalled=False,
-                            opcodesxml: Path = None
+def _generate_documentation(index: MainIndex,
+                            dest: Path | None = None,
+                            buildhtml=True,
+                            onlyinstalled=False,
+                            opcodesxml: Path | None = None
                             ) -> Path:
     """
     Generate documentation for the plugins
@@ -2628,7 +2668,7 @@ def _compile_docs(index: MainIndex, dest: Path, makeindex=True,
         _docs_generate_index(index, dest / "index.md")
 
 
-def _manpage_parse(manpage: Path, opcode: str) -> Optional[ManPage]:
+def _manpage_parse(manpage: Path, opcode: str) -> ManPage | None:
     if not manpage:
         _errormsg(f"Opcode {opcode} has no manpage")
         return None
@@ -3110,8 +3150,9 @@ def main():
     flag(parser, "--update", help="Update the plugins data before any action")
     flag(parser, "--stoponerror", help="Stop parsing if an error is detected")
     flag(parser, "--version", help="Print version and exit")
-    parser.add_argument("-c", "--csound", help="Which csound version to use (one of 0, 6, 7). Use 0 to detect the installed version",
-                         default=0, type=int, )
+    parser.add_argument("-c", "--csound", default=0, type=int,
+                        help="Which csound version to use (one of 0, 6, 7). "
+                             "Use 0 to detect the installed version")
 
     subparsers = parser.add_subparsers(dest='command')
 
@@ -3217,7 +3258,8 @@ def main():
     dev_cmd.add_argument("--outfile", default=None,
                          help="Set the output file for any action generating output")
     dev_cmd.add_argument("cmd", choices=["opcodesxml", "codesign"],
-                         help="Subcommand. opcodesxml: generate xml output similar to opcodes.xml in the csound's manual; "
+                         help="Subcommand. opcodesxml: generate xml output similar to "
+                              "opcodes.xml in the csound's manual; "
                               "codesign: code sign all installed plugins (macos only)")
     dev_cmd.set_defaults(func=cmd_dev)
 
@@ -3239,7 +3281,7 @@ def main():
     update = args.update or args.command == 'update'
 
     if args.csound == 0:
-        csoundversion, minor = _csound_version()
+        csoundversion, minor, rest = _csound_version()
     else:
         csoundversion = args.csound
 

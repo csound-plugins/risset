@@ -9,16 +9,15 @@ if (sys.version_info.major, sys.version_info.minor) < (3, 7):
 long_description = open("README.md").read()
 version = subprocess.check_output([sys.executable, "risset.py", "--version"]).decode('utf8').strip()
 
-
 setup(
-    name = "risset",
-    version = version,
-    python_requires = ">=3.8",
-    description = "A package manager for csound",
-    author = "Eduardo Moguillansky",
-    author_email = "eduardo.moguillansky@gmail.com",
-    long_description = long_description,
-    long_description_content_type = 'text/markdown',
+    name="risset",
+    version=version,
+    python_requires=">=3.8",
+    description="A package manager for csound",
+    author="Eduardo Moguillansky",
+    author_email="eduardo.moguillansky@gmail.com",
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     py_modules=["risset"],
 
     url="https://github.com/csound-plugins/risset",
