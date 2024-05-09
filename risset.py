@@ -742,7 +742,7 @@ class Plugin:
     assets: list[Asset] | None = None
 
     def __post_init__(self):
-        assert isinstance(self.binaries, list)
+        assert isinstance(self.binaries, list) and all(isinstance(b, Binary) for b in self.binaries)
         assert isinstance(self.opcodes, list)
         assert not self.assets or isinstance(self.assets, list)
 
