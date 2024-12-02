@@ -1665,11 +1665,11 @@ def system_plugins_path() -> Path | None:
 
 def _system_plugins_path(majorversion=6) -> Path | None:
     # first check if the user has set OPCODE6DIR64
-    opcode6dir64 = os.getenv(f"OPCODE{majorversion}DIR64")
-    if opcode6dir64:
-        possible_paths = [Path(p) for p in opcode6dir64.split(_get_path_separator())]
+    opcodedir = os.getenv(f"OPCODE{majorversion}DIR64")
+    if opcodedir:
+        possible_paths = [Path(p) for p in opcodedir.split(_get_path_separator())]
     else:
-        possible_paths = default_system_plugins_path()
+        possible_paths = default_system_plugins_path(major=majorversion)
 
     out = _find_system_plugins_path(possible_paths)
     if not out:
