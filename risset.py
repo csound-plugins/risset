@@ -1733,7 +1733,7 @@ def user_installed_dlls(majorversion: int | None = None) -> list[Path]:
         _debug(f"Querying installed dlls for csound version {majorversion}, "
                f"csound's version is {_session.csound_version_tuple}")
     if (out := _session.cache.get(f'user_installed_dlls_{majorversion}', _UNSET)) is _UNSET:
-        path = user_plugins_path(majorversion=majorversion)
+        path = user_plugins_path(version=majorversion)
         out = list(path.glob("*" + _plugin_extension())) if path and path.exists() else []
         _session.cache[f'user_installed_dlls_{majorversion}'] = out
     return out
