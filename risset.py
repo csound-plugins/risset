@@ -1794,7 +1794,7 @@ class MainIndex:
         self.plugins: dict[str, Plugin] = {}
         self._cache: dict[str, Any] = {}
         self._parse_index(updateindex=updateindex, updateplugins=update, stop_on_errors=False)
-        self.user_plugins_path = user_plugins_path(majorversion=self.majorversion)
+        self.user_plugins_path = user_plugins_path(version=self.majorversion)
         if update:
             self.serialize()
 
