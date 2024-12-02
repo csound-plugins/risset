@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "risset"
+version = "2.9.2"
+description = "Package manager for csound"
+authors = [
+    { name = "Eduardo Moguillansky", email = "eduardo.moguillansky@gmail.com" },
+]
+license = { file = "LICENSE" }
+readme = "README.md"
+classifiers = [
+    "Topic :: Multimedia :: Sound/Audio",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+requires-python = ">=3.9"
+keywords = ["csound"]
+
+dependencies = ["pygments", "ctcsound7>=0.7.0", "mkdocs", "requests"]
+
+[project.scripts]
+risset = "risset:main"
+
+[tool.setuptools]
+py-modules = ["risset"]
+
+[project.urls]
+"Homepage" = "https://github.com/csound-plugins/risset"
