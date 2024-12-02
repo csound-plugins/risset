@@ -23,7 +23,7 @@ jobs:
           mkdir -p artifacts
 
       - name: install csound develop
-        if: matrix.csound-branch == 'develop''
+        if: matrix.csound-branch == 'develop'
         run: |
           git clone -b develop https://github.com/csound/csound --depth 1
           cd csound
