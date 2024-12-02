@@ -5,6 +5,7 @@ jobs:
     name: Test risset on linux - py${{ matrix.python-version }} - ${{ matrix.csound-branch }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.9"]
         csound-branch: ["csound6", "develop"]
@@ -92,6 +93,7 @@ jobs:
     name: Test risset on windows
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.9"]
         csound-branch: ["csound6", "develop"]
@@ -168,6 +170,7 @@ jobs:
     name: Test risset on macos ${{ matrix.arch }}
     runs-on: macos-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.9"]
         arch: ["arm64"]
