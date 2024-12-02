@@ -1,12 +1,13 @@
 on: [push, workflow_dispatch]
- 
+
 jobs:
   testlinux:
-    name: Test risset on linux
+    name: Test risset on linux - py${{ matrix.python-version }} - ${{ matrix.csound-branch }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.9"]
+        csound-branch: ["csound6", "develop"]
     steps:
       - uses: actions/checkout@v3
 
@@ -14,11 +15,27 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: install csound
+      - name: install csound 6
+        if: matrix.csound-branch == "csound6"
         run: |
           sudo apt install csound libcsnd-dev
           csound --version
           mkdir -p artifacts
+
+      - name: install csound develop
+        if: matrix.csound-branch == "develop"
+        run: |
+          git clone -b develop https://github.com/csound/csound --depth 1
+          cd csound
+          sudo apt-get update && sudo apt-get install cmake libsndfile1-dev libasound2-dev libjack-dev portaudio19-dev libportmidi-dev libpulse-dev swig liblua5.1-0-dev default-jdk libfltk1.1-dev libfluidsynth-dev liblo-dev fluid ladspa-sdk libpng-dev dssi-dev libstk0-dev libgmm++-dev bison flex libportsmf-dev libeigen3-dev libcunit1-dev
+          mkdir build && cd build
+          cmake .. -DUSE_MP3=0
+          cmake --build . --parallel
+          sudo make install
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
+          echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+          sudo ldconfig
+          csound --version
 
       - name: linux - test install from git
         run: |
@@ -34,7 +51,7 @@ jobs:
           csound -z1 2>&1 | grep dict_
 
           echo "Checking that the plugins are functional"
-          csound -o test/lfnoise-linux-git.flac --format=flac test/lfnoise.csd
+          csound -o test/lfnoise-linux-${{ matrix.csound-branch }}-git.flac --format=flac test/lfnoise.csd
           cp test/*.flac artifacts
 
           risset show else
@@ -57,7 +74,7 @@ jobs:
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep atstop
-          csound -o test/lfnoise-linux-pip.flac --format=flac test/lfnoise.csd
+          csound -o test/lfnoise-linux-${{ matrix.csound-branch }}-pip.flac --format=flac test/lfnoise.csd
           cp test/*.flac artifacts
 
           risset show else
@@ -72,13 +89,13 @@ jobs:
         with:
           path: artifacts/*
 
-
   testwin:
     name: Test risset on windows
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: [ "3.9" ]
+        python-version: ["3.9"]
+        csound-branch: ["csound6", "develop"]
     steps:
       - uses: actions/checkout@v3
 
@@ -86,7 +103,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: windows - python ${{ matrix.python-version }} install csound
+      - name: install csound6
+        if: matrix.csound-branch == "csound6"
         run: |
           curl -L -o csound-binaries.zip https://github.com/csound/csound/releases/download/6.18.1/Csound-6.18.1-windows-x64-binaries.zip
           Expand-Archive csound-binaries.zip -DestinationPath "C:\Program Files\csound-binaries"
@@ -97,12 +115,38 @@ jobs:
           Write-Output $Env:PATH
           csound.exe --version
 
+      - name: install csound develop
+        if: matrix.csound-branch == "develop"
+        env:
+          VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+        run: |
+          git clone -b develop https://github.com/csound/csound --depth 1
+          cd csound
+          git submodule update --init --recursive
+
+          choco install -y winflexbison3 innosetup
+          .\vcpkg\bootstrap-vcpkg.bat
+          cmake -B build -S . -DBUILD_TESTS=0 -DUSE_VCPKG=1 -DCUSTOM_CMAKE="./platform/windows/Custom-vs.cmake" -DBUILD_JAVA_INTERFACE=OFF -DBUILD_TESTS=OFF
+          cmake --build build --config Release
+          New-Item -Type Directory -Force "C:/Program Files/csound"
+          cp build/Release/*.exe "C:/Program Files/csound"
+          cp build/Release/*.dll "C:/Program Files/csound"
+          cp build/Release/*.lib "C:/Program Files/csound"
+
+          $machinePath = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine')
+
+          [System.Environment]::SetEnvironmentVariable("PATH", $machinePath + ";C:/Program Files/csound", [EnvironmentVariableTarget]::Machine)
+          $Env:Path = $Env:Path + ";C:/Program Files/csound"
+
+          # Write-Output $Env:PATH
+          csound.exe --version
+
       - name: windows - test install from git
         run: |
           $Env:Path = $Env:Path + ";C:\Program Files\csound-binaries\build\Release"
-          
+
           python -c "import platform; print('platform.machine: ', platform.machine())"
-          
+
           pip install .
           risset update
           risset list
@@ -111,7 +155,7 @@ jobs:
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 | Select-String "dict"
 
-          csound -o test/lfnoise-linux-pip.flac --format=flac test/lfnoise.csd
+          csound -o test/lfnoise-linux-${{ matrix.csound-branch }}-pip.flac --format=flac test/lfnoise.csd
 
           risset show else
           risset man mtro
@@ -127,7 +171,8 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.9"]
-        arch: ["x86_64"]
+        arch: ["arm64"]
+        csound-branch: ["csound6", "develop"]
     steps:
       - uses: actions/checkout@v3
 
@@ -135,7 +180,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: macos - install csound
+      - name: macos - install csound 6
+        if: matrix.csound-branch == "csound6"
         run: |
           set -x
           curl -L -o csound6.18.dmg https://github.com/csound/csound/releases/download/6.18.1/Csound-MacOS-universal-6.18.1.dmg
@@ -147,6 +193,17 @@ jobs:
           uname -m
           file $(which csound)
           cd ..
+
+      - name: install csound develop
+        if: matrix.csound-branch == "develop"
+        run: |
+          git clone -b develop https://github.com/csound/csound --depth 1
+          cd csound
+          brew install bison flex libmicrohttpd libogg flac lame libvorbis mpg123 opus libsndfile portaudio fluid-synth libaec libsamplerate aften liblo openblas portmidi
+          cmake -B build -DBUILD_TESTS=0 -DCUSTOM_CMAKE="../cmake/csound-custom-macos.cmake"
+          cmake --build build --config Release
+          sudo cmake --install build
+          csound --version
 
       - name: macos ${{ matrix.arch }} - test install from git
         shell: bash
@@ -166,7 +223,7 @@ jobs:
 
           echo "Ok..."
 
-          csound -o test/lfnoise-macos-${{ matrix.arch }}-git.flac --format=flac test/lfnoise.csd
+          csound -o test/lfnoise-macos-${{ matrix.arch }}-${{ matrix.csound-branch }}-git.flac --format=flac test/lfnoise.csd
 
           mkdir -p artifacts
           cp test/*.flac artifacts
@@ -179,7 +236,6 @@ jobs:
           risset remove klib else
           pip uninstall --yes risset
 
-
       - name: macos ${{ matrix.arch }} - test install from pip
         run: |
           pip install risset -U
@@ -189,7 +245,7 @@ jobs:
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 2>&1 | grep atstop
-          csound -o test/lfnoise-macos-${{ matrix.arch }}-pip.flac --format=flac test/lfnoise.csd
+          csound -o test/lfnoise-macos-${{ matrix.arch }}-${{ matrix.csound-branch }}-pip.flac --format=flac test/lfnoise.csd
 
           mkdir -p artifacts
           cp test/*.flac artifacts
