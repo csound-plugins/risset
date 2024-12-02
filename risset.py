@@ -891,21 +891,38 @@ def _main_repository_path() -> Path:
     return RISSET_ROOT / "risset-data"
 
 
-def user_plugins_path(majorversion=6) -> Path:
+def user_plugins_path(version: int | tuple[int, int] | None = None) -> Path:
     """
     Return the install path for user plugins
 
     This returns the default path or the value of $CS_USER_PLUGINDIR. The env
     variable has priority
+
+    Args:
+        version: the csound version for which to determine the user plugins path
+
+    Returns:
+        the user plugins path, as a Path object
     """
+    if version is None:
+        version = _session.csound_version_tuple[0]
+        major, minor = version, 0
+    elif isinstance(version, tuple):
+        major, minor = version[0], 0
+    elif isinstance(version, int):
+        major, minor = version, 0
+    else:
+        raise TypeError(f"Expected an int major version (6, or 7), a version "
+                        f"tuple (6, 0) or None to use the installed version, "
+                        f"got {version}")
     cs_user_plugindir = os.getenv("CS_USER_PLUGINDIR")
     if cs_user_plugindir:
         out = Path(cs_user_plugindir)
     else:
         pluginsdir = {
-            'linux': f'$HOME/.local/lib/csound/{majorversion}.0/plugins64',
-            'win32': f'C:\\Users\\$USERNAME\\AppData\\Local\\csound\\{majorversion}.0\\plugins64',
-            'darwin': f'$HOME/Library/csound/{majorversion}.0/plugins64'
+            'linux': f'$HOME/.local/lib/csound/{major}.{minor}/plugins64',
+            'win32': f'C:\\Users\\$USERNAME\\AppData\\Local\\csound\\{major}.{minor}\\plugins64',
+            'darwin': f'$HOME/Library/csound/{major}.{minor}/plugins64'
         }[sys.platform]
         out = Path(os.path.expandvars(pluginsdir))
     return out
