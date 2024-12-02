@@ -1671,22 +1671,27 @@ def default_system_plugins_path(major=6, minor=0) -> list[Path]:
     return [Path(p).absolute() for p in possible_dirs]
 
 
-def system_plugins_path() -> Path | None:
+def system_plugins_path(majorversion: int | None = None) -> Path | None:
     """
     Get the path were system plugins are installed.
     """
-
-    if (out := _session.cache.get('system_plugins_path', _UNSET)) is _UNSET:
-        versionmajor = _session.csound_version_tuple[0]
-        _session.cache['system_plugins_path'] = out = _system_plugins_path(majorversion=versionmajor)
+    if majorversion is None:
+        majorversion = _session.csound_version_tuple[0]
+    elif majorversion != _session.csound_version_tuple[0]:
+        _debug(f"Queryng system plugin path for csound version {majorversion}, but "
+               f"csound's version is {_session.csound_version}")
+    if (out := _session.cache.get(f'system_plugins_path_{majorversion}', _UNSET)) is _UNSET:
+        _session.cache[f'system_plugins_path_{majorversion}'] = out = _system_plugins_path(majorversion=versionmajor)
     return out
 
 
-def _system_plugins_path(majorversion: int) -> Path | None:
-    # first check if the user has set OPCODE6DIR64
-    if majorversion != _session.csound_version_tuple[0]:
-        _info(f"Queryng system plugin path for csound version {majorversion}, but "
-              f"csound's version is {_session.csound_version}")
+def _system_plugins_path(majorversion: int | None = None) -> Path | None:
+    # first check if the user has set OPCODE6DIR64/OPCODE7DIR64
+    if majorversion is None:
+        majorversion = _session.csound_version_tuple[0]
+    elif majorversion != _session.csound_version_tuple[0]:
+        _debug(f"Queryng system plugin path for csound version {majorversion}, but "
+               f"csound's version is {_session.csound_version}")
     opcodedir = os.getenv(f"OPCODE{majorversion}DIR64")
     if opcodedir:
         possible_paths = [Path(p) for p in opcodedir.split(_get_path_separator())]
@@ -1701,25 +1706,32 @@ def _system_plugins_path(majorversion: int) -> Path | None:
     return out
 
 
-def user_installed_dlls(majorversion=6) -> list[Path]:
+def user_installed_dlls(majorversion: int | None = None) -> list[Path]:
     """
     Return a list of plugins installed at the user plugin path.
     """
-    if (out := _session.cache.get('user_installed_dlls', _UNSET)) is _UNSET:
+    if majorversion is None:
+        majorversion = _session.csound_version_tuple[0]
+    elif majorversion != _session.csound_version_tuple[0]:
+        _debug(f"Querying installed dlls for csound version {majorversion}, "
+               f"csound's version is {_session.csound_version_tuple}")
+    if (out := _session.cache.get(f'user_installed_dlls_{majorversion}', _UNSET)) is _UNSET:
         path = user_plugins_path(majorversion=majorversion)
         out = list(path.glob("*" + _plugin_extension())) if path and path.exists() else []
-        _session.cache['user_installed_dlls'] = out
+        _session.cache[f'user_installed_dlls_{majorversion}'] = out
     return out
 
 
-def system_installed_dlls() -> list[Path]:
+def system_installed_dlls(majorversion: int | None = None) -> list[Path]:
     """
-    LIst of plugins installed at the system's path
+    List of plugins installed at the system's path
     """
-    if (out := _session.cache.get('system_installed_dlls')) is None:
-        path = system_plugins_path()
+    if majorversion is None:
+        majorversion = _session.csound_version_tuple[0]
+    if (out := _session.cache.get(f'system_installed_dlls_{majorversion}')) is None:
+        path = system_plugins_path(majorversion=majorversion)
         out = list(path.glob("*" + _plugin_extension())) if path and path.exists() else []
-        _session.cache['system_installed_dlls'] = out
+        _session.cache[f'system_installed_dlls_{majorversion}'] = out
     return out
 
 
