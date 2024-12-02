@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-__version__ = "2.9.2"
+__version__ = "2.9.3"
 
 import sys
 
@@ -212,7 +212,8 @@ def _csoundlib_version() -> tuple[int, int]:
     This version can differ from the version of the installed csound binary
     """
     import ctcsound7
-    versionid = ctcsound7.libcsound.csoundGetVersion()
+    versionid = ctcsound7.VERSION
+    # versionid = ctcsound7.libcsound.csoundGetVersion()
     major = versionid // 1000
     minor = (versionid - major*1000) // 10
     return major, minor
@@ -580,10 +581,10 @@ class Binary:
         post_install_script: a script to run after the binary has been installed
     """
     platform: str
-    """The platform for which this binary was compiled. 
-    
-    A pair <os>-<arch>, where os is one of linux, windows, macos, and 
-    arch is one of 'x86_64', 'arm64'. See _supported_platforms for an 
+    """The platform for which this binary was compiled.
+
+    A pair <os>-<arch>, where os is one of linux, windows, macos, and
+    arch is one of 'x86_64', 'arm64'. See _supported_platforms for an
     up-to-date list"""
 
     url: str
@@ -982,9 +983,12 @@ def _zip_extract_file(zipfile: Path, extractpath: str) -> Path:
     return _zip_extract(zipfile, [extractpath])[0]
 
 
-def _csound_opcodes(method='csound') -> list[str]:
+def _csound_opcodes(method='api') -> set[str]:
     """
-    Returns a list of installed opcodes
+    Returns a set of installed opcodes
+
+    Args:
+        method: one of 'csound', 'api'
     """
     if method == 'csound':
         csound_bin = _get_csound_binary("csound")
@@ -999,19 +1003,13 @@ def _csound_opcodes(method='csound') -> list[str]:
                 continue
             parts = line.split()
             opcodes.append(parts[0])
-        return opcodes
-    elif method == 'ctcsound':
+        return set(opcodes)
+    elif method == 'api':
         import ctcsound7
         cs = ctcsound7.Csound()
-        cs.setOption("-d")  # supress displays
-        # if opcodedir:
-        #     cs.setOption(f'--opcode-dir={opcodedir}')
-        opcodes, n = cs.newOpcodeList()
-        opcodeNames = [opc.opname.decode('utf-8') for opc in opcodes]
-        cs.disposeOpcodeList(opcodes)
-        return opcodeNames
+        return set(opcode.name for opcode in cs.getOpcodes())
     else:
-        raise ValueError(f"Method '{method}' unknown, possible methods: 'csound', 'ctcsound'")
+        raise ValueError(f"Method '{method}' unknown, possible methods: 'csound', 'api'")
 
 
 def _plugin_extension() -> str:
@@ -1911,7 +1909,7 @@ class MainIndex:
         manifests = list(path.glob("*.json"))
         return manifests
 
-    def _is_plugin_recognized_by_csound(self, plugin: Plugin, method='csound') -> bool:
+    def _is_plugin_recognized_by_csound(self, plugin: Plugin, method='api') -> bool:
         """
         Check if a given plugin is installed
 
@@ -1941,7 +1939,7 @@ class MainIndex:
         dll, user_installed = self.installed_path_for_dll(binfile)
         return dll
 
-    def is_plugin_installed(self, plugin: Plugin, check=True, method='csound') -> bool:
+    def is_plugin_installed(self, plugin: Plugin, check=True, method='api') -> bool:
         """
         Is the given plugin installed?
 
@@ -1952,7 +1950,7 @@ class MainIndex:
             plugin: the plugin to query
             check: if True, we check if the opcodes declared in the plugin definition
                 are actually available
-            method: one of 'csound' (check via the binary), 'ctcsound' (check via the API)
+            method: one of 'csound' (check via the binary), 'api' (check via the API)
 
         Returns:
             True if the plugin is installed. If check, we also check that the plugin is actually
@@ -2287,7 +2285,7 @@ class MainIndex:
         return d
 
     def available_plugins(self, platformid: str = '', csound_version: int = 0, installed_only=False,
-                          not_installed_only=False, method='csound', check=True
+                          not_installed_only=False, method='api', check=True
                           ) -> list[Plugin]:
         if not platformid:
             platformid = _session.platformid
