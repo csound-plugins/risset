@@ -1180,17 +1180,25 @@ def _version_tuple(versionstr: str) -> tuple[int, int, int]:
     return i1, i2, i3
 
 
-def _find_system_plugins_path(possible_paths: list[Path]) -> Path | None:
+def _find_system_plugins_path(possible_paths: list[Path], majorversion=6) -> Path | None:
     """
     Given a list of possible paths, find the folder where the system plugins are installed
     """
     ext = _plugin_extension()
     _debug("> Searching opcodes dir: ")
 
-    if sys.platform == "win32":
-        dll = "arrayops.dll"
+    if majorversion == 6:
+        if sys.platform == "win32":
+            dll = "arrayops.dll"
+        else:
+            dll = "libarrayops" + ext
+    elif majorversion == 7:
+        if sys.platform == 'win32':
+            dll = "rtpa.dll"
+        else:
+            dll = "librtpa" + ext
     else:
-        dll = "libarrayops" + ext
+        raise ValueError(f"Expected 6 or 7, got {majorversion}")
 
     for d in possible_paths:
         _debug(">> looking at ", d)
@@ -1622,7 +1630,8 @@ def default_system_plugins_path(major=6, minor=0) -> list[Path]:
     if platform == 'linux':
         possible_dirs = [f"/usr/local/lib/csound/plugins64-{major}.{minor}",
                          f"/usr/lib/csound/plugins64-{major}.{minor}",
-                         f"/usr/lib/x86_64-linux-gnu/csound/plugins64-{major}.{minor}"]
+                         f"/usr/lib/x86_64-linux-gnu/csound/plugins64-{major}.{minor}",
+        ]
         if _session.architecture == 'arm64':
             # This is where debian in raspberry pi installs csound's plugins
             # https://packages.debian.org/bullseye/armhf/libcsound64-6.0/filelist
