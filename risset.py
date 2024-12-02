@@ -1681,7 +1681,7 @@ def system_plugins_path(majorversion: int | None = None) -> Path | None:
         _debug(f"Queryng system plugin path for csound version {majorversion}, but "
                f"csound's version is {_session.csound_version}")
     if (out := _session.cache.get(f'system_plugins_path_{majorversion}', _UNSET)) is _UNSET:
-        _session.cache[f'system_plugins_path_{majorversion}'] = out = _system_plugins_path(majorversion=versionmajor)
+        _session.cache[f'system_plugins_path_{majorversion}'] = out = _system_plugins_path(majorversion=majorversion)
     return out
 
 
