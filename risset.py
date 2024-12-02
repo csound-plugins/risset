@@ -271,13 +271,22 @@ class _Session:
         }[sys.platform]
 
         self.architecture = _platform_architecture()
+        """The current architecture"""
 
         self.platformid = self._platform_id()
         """The pair <os>-<arch> (linux-x86_64, windows-x86_64, macos-arm64, etc"""
 
-        self.debug = False
         major, minor = _csoundlib_version()
+
+        self.debug = False
+        """True if in debug mode"""
+
+        self.csound_version_tuple = (major, minor)
+        """Csound version as (major, minor)"""
+
         self.csound_version: int = major * 1000 + minor * 10
+        """Csound version id as integer, 6190 = 6.19, 7000 = 7.0"""
+
         self.stop_on_errors = True
         self.entitlements_saved = False
         self.cache = {}
@@ -1180,7 +1189,7 @@ def _version_tuple(versionstr: str) -> tuple[int, int, int]:
     return i1, i2, i3
 
 
-def _find_system_plugins_path(possible_paths: list[Path], majorversion=6) -> Path | None:
+def _find_system_plugins_path(possible_paths: list[Path], majorversion) -> Path | None:
     """
     Given a list of possible paths, find the folder where the system plugins are installed
     """
@@ -1668,19 +1677,23 @@ def system_plugins_path() -> Path | None:
     """
 
     if (out := _session.cache.get('system_plugins_path', _UNSET)) is _UNSET:
-        _session.cache['system_plugins_path'] = out = _system_plugins_path()
+        versionmajor = _session.csound_version_tuple[0]
+        _session.cache['system_plugins_path'] = out = _system_plugins_path(majorversion=versionmajor)
     return out
 
 
-def _system_plugins_path(majorversion=6) -> Path | None:
+def _system_plugins_path(majorversion: int) -> Path | None:
     # first check if the user has set OPCODE6DIR64
+    if majorversion != _session.csound_version_tuple[0]:
+        _info(f"Queryng system plugin path for csound version {majorversion}, but "
+              f"csound's version is {_session.csound_version}")
     opcodedir = os.getenv(f"OPCODE{majorversion}DIR64")
     if opcodedir:
         possible_paths = [Path(p) for p in opcodedir.split(_get_path_separator())]
     else:
         possible_paths = default_system_plugins_path(major=majorversion)
 
-    out = _find_system_plugins_path(possible_paths)
+    out = _find_system_plugins_path(possible_paths, majorversion=majorversion)
     if not out:
         _info(f"System plugins path not found. Searched paths: {possible_paths}")
         return None
