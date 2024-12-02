@@ -16,14 +16,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: install csound 6
-        if: matrix.csound-branch == "csound6"
+        if: matrix.csound-branch == 'csound6'
         run: |
           sudo apt install csound libcsnd-dev
           csound --version
           mkdir -p artifacts
 
       - name: install csound develop
-        if: matrix.csound-branch == "develop"
+        if: matrix.csound-branch == 'develop''
         run: |
           git clone -b develop https://github.com/csound/csound --depth 1
           cd csound
