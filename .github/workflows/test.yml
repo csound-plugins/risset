@@ -177,7 +177,7 @@ jobs:
         csound-branch: ["csound6", "develop"]
     steps:
       - uses: actions/checkout@v3
-
+        
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
@@ -201,8 +201,10 @@ jobs:
         run: |
           git clone -b develop https://github.com/csound/csound --depth 1
           cd csound
+          git submodule update --init --recursive
+          
           brew install bison flex libmicrohttpd libogg flac lame libvorbis mpg123 opus libsndfile portaudio fluid-synth libaec libsamplerate aften liblo openblas portmidi
-          cmake -B build -DBUILD_TESTS=0 -DCUSTOM_CMAKE="../cmake/csound-custom-macos.cmake"
+          cmake -B build -DBUILD_TESTS=0 -DCUSTOM_CMAKE="./platform/osx/custom-osx.cmake"
           cmake --build build --config Release
           sudo cmake --install build
           csound --version
