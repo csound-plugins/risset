@@ -19,9 +19,17 @@ jobs:
       - name: install csound 6
         if: matrix.csound-branch == 'csound6'
         run: |
-          sudo apt install csound libcsnd-dev
+          git clone -b csound6 https://github.com/csound/csound --depth 1
+          cd csound
+          sudo apt-get update && sudo apt-get install cmake libsndfile1-dev libasound2-dev libjack-dev portaudio19-dev libportmidi-dev libpulse-dev swig liblua5.1-0-dev default-jdk libfltk1.1-dev libfluidsynth-dev liblo-dev fluid ladspa-sdk libpng-dev dssi-dev libstk0-dev libgmm++-dev bison flex libportsmf-dev libeigen3-dev libcunit1-dev
+          mkdir build && cd build
+          cmake .. -DUSE_MP3=0
+          cmake --build . --parallel
+          sudo make install
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
+          echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+          sudo ldconfig
           csound --version
-          mkdir -p artifacts
 
       - name: install csound develop
         if: matrix.csound-branch == 'develop'
@@ -52,6 +60,7 @@ jobs:
 
           echo "Checking that the plugins are functional"
           csound -o test/lfnoise-linux-${{ matrix.csound-branch }}-git.flac --format=flac test/lfnoise.csd
+          mkdir -p artifacts
           cp test/*.flac artifacts
 
           risset show else
