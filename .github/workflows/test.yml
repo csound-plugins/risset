@@ -91,6 +91,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - uses: lukka/get-cmake@v3.29.0
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: install csound6
         if: matrix.csound-branch == 'csound6'
         run: |
@@ -116,6 +125,7 @@ jobs:
           .\vcpkg\bootstrap-vcpkg.bat
           cmake -B build -S . -DBUILD_TESTS=0 -DUSE_VCPKG=1 -DCUSTOM_CMAKE="./platform/windows/Custom-vs.cmake" -DBUILD_JAVA_INTERFACE=OFF -DBUILD_TESTS=OFF
           cmake --build build --config Release
+          Get-ChildItem -Path ".\build" -Recurse
           New-Item -Type Directory -Force "C:/Program Files/csound"
           cp build/Release/*.exe "C:/Program Files/csound"
           cp build/Release/*.dll "C:/Program Files/csound"
