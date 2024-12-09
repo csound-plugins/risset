@@ -1673,7 +1673,9 @@ def _check_mimetype(path: Path) -> str:
     return ''
 
 
-def default_system_plugins_path(major=6, minor=0) -> list[Path]:
+def default_system_plugins_path(major: int | None = None, minor=0) -> list[Path]:
+    if major is None:
+        major = _session.csound_version_tuple[0]
     platform = _session.platform
 
     if platform == 'linux':
@@ -1725,15 +1727,12 @@ def system_plugins_path(majorversion: int | None = None) -> Path | None:
     return out
 
 
-def _system_plugins_path(majorversion: int | None = None) -> Path | None:
-    # first check if the user has set OPCODE6DIR64/OPCODE7DIR64
-    if majorversion is None:
-        majorversion = _session.csound_version_tuple[0]
-    elif majorversion != _session.csound_version_tuple[0]:
-        _debug(f"Queryng system plugin path for csound version {majorversion}, but "
-               f"csound's version is {_session.csound_version}")
-    opcodedir = os.getenv(f"OPCODE{majorversion}DIR64")
+def _system_plugins_path(majorversion: int) -> Path | None:
+    assert majorversion in (6, 7)
+    opcodedir64 = f"OPCODE{majorversion}DIR64"
+    opcodedir = os.getenv(opcodedir64)
     if opcodedir:
+        _debug(f"Env variable {opcodedir64}, set to {opcodedir}")
         possible_paths = [Path(p) for p in opcodedir.split(_get_path_separator())]
     else:
         possible_paths = default_system_plugins_path(major=majorversion)
@@ -1741,6 +1740,7 @@ def _system_plugins_path(majorversion: int | None = None) -> Path | None:
     out = _find_system_plugins_path(possible_paths, majorversion=majorversion)
     if not out:
         _info(f"System plugins path not found. Searched paths: {possible_paths}")
+        _debug(f"Csound version: {_session.csound_version}, version tuple: {_session.csound_version_tuple}")
         return None
     assert out.exists() and out.is_dir() and out.is_absolute()
     return out
