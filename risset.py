@@ -213,7 +213,6 @@ def _csoundlib_version() -> tuple[int, int]:
     """
     import ctcsound7
     versionid = ctcsound7.VERSION
-    # versionid = ctcsound7.libcsound.csoundGetVersion()
     major = versionid // 1000
     minor = (versionid - major*1000) // 10
     return major, minor
@@ -1630,9 +1629,11 @@ def _download_file(url: str, destination_folder='', cache=True) -> Path:
     _debug("Downloading url", url)
     try:
         resp = requests.get(url, verify=True, allow_redirects=True)
-        contentdisp_filename = _filename_from_content_disposition(resp.headers.get('content-disposition'))
-        if contentdisp_filename:
-            baseoutfile = contentdisp_filename
+        contentdisp = resp.headers.get('content-disposition')
+        if contentdisp is not None:
+            contentdisp_filename = _filename_from_content_disposition(contentdisp)
+            if contentdisp_filename:
+                baseoutfile = contentdisp_filename
 
     except requests.ConnectionError as err:
         _errormsg(f"Connection error while trying to download url: '{url}'")
@@ -1648,6 +1649,28 @@ def _download_file(url: str, destination_folder='', cache=True) -> Path:
     open(destpath, 'wb').write(resp.content)
     _session.downloaded_files[url] = destpath
     return destpath
+
+
+def _check_mimetype(path: Path) -> str:
+    """
+    Checks the mimetype of the given path, returns an error message
+    """
+    import filetype
+    out = filetype.guess(path.as_posix())
+    if out is None:
+        return "Unknown mimetype"
+    ext = path.suffix
+    mimes = {
+        '.zip': 'application/zip',
+        '.so': 'application/x-executable',
+        '.dylib': 'application/x-executable',
+        '.dll': 'application/x-executable',
+    }
+    if ext not in mimes:
+        return "Unknown suffix"
+    if out.mime != mimes[ext]:
+        return f"Expected {mimes[ext]}, got {out.mime}"
+    return ''
 
 
 def default_system_plugins_path(major=6, minor=0) -> list[Path]:
@@ -2092,7 +2115,11 @@ class MainIndex:
         )
         return out
 
-    def get_plugin_dll(self, plugin: Plugin, platformid: str = '', csound_version: int = 0
+    def get_plugin_dll(self,
+                       plugin: Plugin,
+                       platformid: str = '',
+                       csound_version: int = 0,
+                       check_mimetype=True
                        ) -> Path:
         """
         Returns the path to the binary as defined in the manifest
@@ -2138,6 +2165,11 @@ class MainIndex:
         _debug(f"get_plugin_dll: resolved path = {str(path)}")
         if not path.exists():
             raise IOError(f"Binary not found. Given path was: {str(path)}")
+
+        if check_mimetype:
+            errormsg = _check_mimetype(path)
+            if errormsg:
+                raise RuntimeError(f"The downloaded file {path} has an incorrect mimetype: {errormsg}")
 
         if path.suffix in ('.so', '.dll', '.dylib'):
             return path
