@@ -72,28 +72,6 @@ jobs:
           risset remove klib else
           pip uninstall --yes risset
 
-      - name: test install from pip
-        run: |
-          echo "******************* Test install from pip in linux **********************"
-          pip install risset -U
-          echo "Risset version: $(risset --version)"
-          risset update
-          risset list
-          risset install else klib
-          echo "-------------------------------"
-          echo "Checking that the plugin is installed and recognized by csound"
-          csound -z1 2>&1 | grep atstop
-          csound -o test/lfnoise-linux-${{ matrix.csound-branch }}-pip.flac --format=flac test/lfnoise.csd
-          cp test/*.flac artifacts
-
-          risset show else
-          risset man mtro
-          risset info --full
-          risset makedocs
-
-          risset remove else klib
-          pip uninstall --yes risset
-
       - uses: actions/upload-artifact@v3
         with:
           path: artifacts/*
@@ -186,7 +164,7 @@ jobs:
         csound-branch: ["csound6", "develop"]
     steps:
       - uses: actions/checkout@v3
-        
+
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
@@ -211,7 +189,7 @@ jobs:
           git clone -b develop https://github.com/csound/csound --depth 1
           cd csound
           git submodule update --init --recursive
-          
+
           brew install bison flex libmicrohttpd libogg flac lame libvorbis mpg123 opus libsndfile portaudio fluid-synth libaec libsamplerate aften liblo openblas portmidi jack
           cmake -B build -DBUILD_TESTS=0 -DCUSTOM_CMAKE="./platform/osx/custom-osx.cmake"
           cmake --build build --config Release
@@ -248,28 +226,6 @@ jobs:
           risset makedocs
 
           risset remove klib else
-          pip uninstall --yes risset
-
-      - name: macos ${{ matrix.arch }} - test install from pip
-        run: |
-          pip install risset -U
-          risset update
-          risset list
-          risset install else
-          echo "-------------------------------"
-          echo "Checking that the plugin is installed and recognized by csound"
-          csound -z1 2>&1 | grep atstop
-          csound -o test/lfnoise-macos-${{ matrix.arch }}-${{ matrix.csound-branch }}-pip.flac --format=flac test/lfnoise.csd
-
-          mkdir -p artifacts
-          cp test/*.flac artifacts
-
-          risset show else
-          risset man mtro
-          risset info --full
-          risset makedocs
-
-          risset remove else
           pip uninstall --yes risset
 
       - uses: actions/upload-artifact@v3
