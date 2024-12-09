@@ -68,10 +68,6 @@ jobs:
           risset info --full
           risset makedocs
 
-          echo "Uninstalling risset"
-          risset remove klib else
-          pip uninstall --yes risset
-
       - uses: actions/upload-artifact@v3
         with:
           path: artifacts/*
@@ -157,9 +153,6 @@ jobs:
           risset info --full
           risset makedocs
 
-          risset remove klib else
-          pip uninstall --yes risset
-
   testmacos:
     name: Test risset on macos ${{ matrix.arch }} - ${{ matrix.csound-branch }}
     runs-on: macos-latest
@@ -230,9 +223,6 @@ jobs:
           risset man mtro
           risset info --full
           risset makedocs
-
-          risset remove klib else
-          pip uninstall --yes risset
 
       - uses: actions/upload-artifact@v3
         with:
