@@ -125,7 +125,8 @@ jobs:
           choco install -y winflexbison3 innosetup
           .\vcpkg\bootstrap-vcpkg.bat
           cmake -B build -S . -DBUILD_TESTS=0 -DUSE_VCPKG=1 -DCUSTOM_CMAKE="./platform/windows/Custom-vs.cmake" -DBUILD_JAVA_INTERFACE=OFF -DBUILD_TESTS=OFF
-          # cmake --build build --config Release
+          cmake --build build --config Release
+
           Get-ChildItem -Path ".\build" -Recurse
           New-Item -Type Directory -Force "C:/Program Files/csound"
           cp build\Release\* "C:/Program Files/csound"
