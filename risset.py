@@ -2844,7 +2844,7 @@ def _docs_generate_index(index: MainIndex, outfile: Path) -> None:
 ###############################################################
 
 
-def cmd_list(mainindex: MainIndex, args) -> bool:
+def cmd_list(mainindex: MainIndex, args) -> str:
     """
     Lists all plugins available for download
     """
@@ -2860,18 +2860,20 @@ def cmd_list(mainindex: MainIndex, args) -> bool:
         header = True
         if args.oneline or args.nameonly or args.noheader:
             header = False
-        return mainindex.list_plugins(installed=args.installed, nameonly=args.nameonly, oneline=args.oneline,
-                                      upgradeable=args.upgradeable, header=header)
+        ok = mainindex.list_plugins(installed=args.installed, nameonly=args.nameonly, oneline=args.oneline,
+                                    upgradeable=args.upgradeable, header=header)
+        return '' if ok else 'Error while listing plugins'
 
 
-def cmd_show(index: MainIndex, args) -> bool:
+def cmd_show(index: MainIndex, args) -> str:
     """
     Returns True on success
     """
-    return index.show_plugin(args.plugin)
+    ok = index.show_plugin(args.plugin)
+    return '' if ok else "Errors while showing plugins"
 
 
-def cmd_rm(index: MainIndex, args) -> bool:
+def cmd_rm(index: MainIndex, args) -> str:
     """
     Remove a plugin
     """
@@ -2887,10 +2889,10 @@ def cmd_rm(index: MainIndex, args) -> bool:
         except Exception as e:
             _errormsg(str(e))
             errors += 1
-    return errors == 0
+    return '' if not errors else 'Errors while removing plugins'
 
 
-def cmd_install(index: MainIndex, args) -> bool:
+def cmd_install(index: MainIndex, args) -> str:
     """
     Install or upgrade a plugin
 
@@ -2913,10 +2915,10 @@ def cmd_install(index: MainIndex, args) -> bool:
         if matched:
             allplugins.extend(matched)
     if not allplugins:
-        _errormsg("No plugins matched")
-        return False
+        return "No plugins matched"
+
     allplugins = list(set(allplugins))  # remove duplicates
-    errors_found = False
+    errors = []
     for plugin in allplugins:
         plugininfo = index.installed_plugin_info(plugin)
         if not plugininfo:
@@ -2925,23 +2927,20 @@ def cmd_install(index: MainIndex, args) -> bool:
         elif not plugininfo.versionstr or plugininfo.versionstr == UNKNOWN_VERSION:
             # plugin is installed but without a corresponding install manifest.
             if not args.force:
-                _errormsg(f"Plugin {plugin.name} is already installed. Use --force to force reinstall")
-                errors_found = True
-                continue
+                errors.append(f"Plugin {plugin.name} is already installed. Use --force to force reinstall")
         else:
             if plugin.versiontuple <= plugininfo.versiontuple:
                 _debug(f"Plugin {plugin.name}, version: {plugin.version}")
                 _debug(f"    Installed version: {plugininfo.versionstr}")
                 _info(f"Installed version of plugin {plugin.name} is up-to-date")
-                errors_found = True
                 continue
             _info(f"Updating plugin {plugin.name}: "
                   f"{plugininfo.versionstr} -> {plugin.version}")
         error = index.install_plugin(plugin)
         if error:
             _debug(f"Errors while installing {plugin.name}")
-            _errormsg(error)
-    return False if errors_found else True
+            errors.append(error)
+    return '' if not errors else '; '.join(errors)
 
 
 def _open_in_default_application(path: str):
@@ -2960,7 +2959,7 @@ def _open_in_default_application(path: str):
         raise RuntimeError(f"platform {platform} not supported")
 
 
-def cmd_man(idx: MainIndex, args) -> bool:
+def cmd_man(idx: MainIndex, args) -> str:
     """
     Show man page for an installed opcode
 
@@ -2985,8 +2984,7 @@ def cmd_man(idx: MainIndex, args) -> bool:
         # open the index
         htmlidx = RISSET_GENERATED_DOCS / "site" / "index.html"
         if not htmlidx.exists():
-            _errormsg(f"Index file for the documentation not found (path: {htmlidx.as_posix()}")
-            return False
+            return f"Index file for the documentation not found (path: {htmlidx.as_posix()}"
         _open_in_default_application(htmlidx.as_posix())
     else:
         for opcode in opcodes:
@@ -3008,15 +3006,15 @@ def cmd_man(idx: MainIndex, args) -> bool:
             else:
                 # open it in the default application
                 _open_in_default_application(str(path))
-    return True
+    return ''
 
 
-def cmd_resetcache(args) -> None:
+def cmd_resetcache(args) -> str:
     _rm_dir(RISSET_DATAREPO_LOCALPATH)
     _rm_dir(RISSET_CLONES_PATH)
     if os.path.exists(_MAININDEX_PICKLE_FILE):
         os.remove(_MAININDEX_PICKLE_FILE)
-
+    return ''
 
 def update_self():
     """Upgrade risset itself"""
@@ -3024,7 +3022,7 @@ def update_self():
     subprocess.check_call([sys.executable, "-m", "pip", "install", "risset", "--upgrade"])
 
 
-def cmd_list_installed_opcodes(plugins_index: MainIndex, args) -> bool:
+def cmd_list_installed_opcodes(plugins_index: MainIndex, args) -> str:
     """
     Print a list of installed opcodes
 
@@ -3035,10 +3033,10 @@ def cmd_list_installed_opcodes(plugins_index: MainIndex, args) -> bool:
     else:
         for opcode in plugins_index.defined_opcodes():
             print(opcode.name)
-    return True
+    return ''
 
 
-def cmd_dev(idx: MainIndex, args) -> bool:
+def cmd_dev(idx: MainIndex, args) -> str:
     if args.cmd == 'opcodesxml':
         outstr = idx.generate_opcodes_xml()
         outfile = args.outfile or RISSET_OPCODESXML
@@ -3049,8 +3047,8 @@ def cmd_dev(idx: MainIndex, args) -> bool:
             _debug(f"Generated opcodes.xml at '{outfile}'")
     elif args.cmd == 'codesign':
         if _session.platform != 'macos':
-            _errormsg(f"Code signing is only available for macos, not for '{_session.platform}'")
-            return False
+            return f"Code signing is only available for macos, not for '{_session.platform}'"
+
         plugins = idx.available_plugins(installed_only=True, check=False)
         dylibs = []
         for plugin in plugins:
@@ -3064,10 +3062,10 @@ def cmd_dev(idx: MainIndex, args) -> bool:
             _debug(f"Code signing the following plugin binaries: {dylibs}")
             macos_codesign(dylibs)
 
-    return True
+    return ''
 
 
-def cmd_makedocs(idx: MainIndex, args) -> bool:
+def cmd_makedocs(idx: MainIndex, args) -> str:
     """
     Generate the documentation for all opcodes
 
@@ -3082,15 +3080,14 @@ def cmd_makedocs(idx: MainIndex, args) -> bool:
         _generate_documentation(idx, dest=Path(outfolder), buildhtml=True, onlyinstalled=args.onlyinstalled,
                                 opcodesxml=RISSET_OPCODESXML)
     except Exception as e:
-        _errormsg(str(e))
-        return False
+        return str(e)
 
     _info(f"Documentation generated in {outfolder}")
     _info(f"Saved opcodes.xml to {RISSET_OPCODESXML}")
-    return True
+    return ''
 
 
-def cmd_info(idx: MainIndex, args) -> bool:
+def cmd_info(idx: MainIndex, args) -> str:
     picklefile = _MAININDEX_PICKLE_FILE
     if not picklefile.exists():
         lastupdate = 99999999
@@ -3120,10 +3117,10 @@ def cmd_info(idx: MainIndex, args) -> bool:
         open(args.outfile, "w").write(jsonstr)
     else:
         print(jsonstr)
-    return True
+    return ''
 
 
-def cmd_upgrade(idx: MainIndex, args) -> bool:
+def cmd_upgrade(idx: MainIndex, args) -> str:
     """ Upgrades all installed packages if they can be upgraded """
     for plugin in idx.plugins.values():
         if not idx.is_plugin_installed(plugin):
@@ -3140,19 +3137,17 @@ def cmd_upgrade(idx: MainIndex, args) -> bool:
             if err:
                 _errormsg(f"Error while installing {plugin.name}")
                 _errormsg("    " + str(err))
+    return ''
 
-    return True
 
-
-def cmd_download(idx: MainIndex, args) -> bool:
+def cmd_download(idx: MainIndex, args) -> str:
     """Downloads a binary for a given plugin"""
     outfolder = args.path
     if not outfolder:
         outfolder = Path.cwd().as_posix()
 
     if not os.path.exists(outfolder):
-        _errormsg(f"download: Output folder '{outfolder}' does not exist")
-        return False
+        return f"download: Output folder '{outfolder}' does not exist"
 
     platformid = args.platform
     if not platformid:
@@ -3161,24 +3156,90 @@ def cmd_download(idx: MainIndex, args) -> bool:
     plugin = idx.plugins.get(args.plugin)
     if plugin is None:
         pluginnames = ', '.join(idx.plugins.keys())
-        _errormsg(f"download: Unknown plugin '{args.plugin}'. Available plugins: {pluginnames}")
-        return False
+        return f"download: Unknown plugin '{args.plugin}'. Available plugins: {pluginnames}"
+
 
     dllpath = idx.get_plugin_dll(plugin=plugin, platformid=platformid)
     if not dllpath.exists():
-        _errormsg(f"Error while downloading binary for plugin '{plugin.name}'. "
-                  f"Expected to find the binary at '{dllpath}', but the path does not exist")
-        return False
+        return (f"Error while downloading binary for plugin '{plugin.name}'. "
+                f"Expected to find the binary at '{dllpath}', but the path does not exist")
 
     outfile = Path(outfolder) / dllpath.name
     if outfile.exists():
-        _errormsg(f"The destination path '{outfile}' already exists.")
-        return False
+        return f"download: the destination path '{outfile}' already exists."
 
     shutil.move(dllpath, outfolder)
-
     _info(f"Downloaded binary for plugin '{plugin.name}' to '{outfile}'")
-    return True
+    return ''
+
+def cmd_validate(idx: MainIndex, args) -> str:
+    """Validate a definition file"""
+    infile = args.infile
+    if not os.path.exists(infile):
+        return f"validate: file {infile} not found"
+    try:
+        jsonstr = open(infile).read()
+        root = json.loads(jsonstr)
+    except json.JSONDecodeError as e:
+        return f"validate: Error decoding json file '{infile}': {e}"
+
+    def checkkey(d: dict, key: str, valuetype: type | tuple[type] = str, options: tuple[str, ...] | None = None, validatorfunc=None) -> str:
+        if key not in d:
+            return f"Key '{key}' not found"
+        value = d[key]
+        if not isinstance(value, valuetype):
+            return f"Expected a value of type {valuetype}, got {value}"
+        if options and value not in options:
+            return f"Expected one of {options}, got {value}"
+        if validatorfunc:
+            errormsg = validatorfunc(value)
+            if errormsg:
+                return errormsg
+        return ''
+
+    def validateversion(s):
+        parts = s.split(".")
+        if not 1 <= len(parts) <= 3:
+            return f"Invalid version: {s}"
+        try:
+            intparts = [int(part) for part in parts]
+        except ValueError:
+            return f"Version parts must be integers, got {s}"
+
+    def validatebins(binaries):
+        allplatforms = ('linux-x86_64', 'windows-x86_64', 'macos-x86_64', 'macos-arm64')
+        for binary in binaries:
+            if not isinstance(binary, dict):
+                return f"Invalid binary definition, expected a dict, got a {binary}"
+            if errormsg := checkkey(binary, "platform", options=allplatforms):
+                return f"Invalid binary definition: {errormsg}"
+            if errormsg := checkkey(binary, 'url'):
+                return f"Invalid binary definition: {errormsg}"
+            else:
+                url = binary['url']
+                assert isinstance(url, str)
+                if url.endswith('.zip'):
+                    if errormsg := checkkey(binary, 'extractpath'):
+                        return f"The binary url is a zip file, an `extractpath` key is needed ({url=})"
+            if errormsg := checkkey(binary, "csound_version"):
+                return f"Invalid binary definition: {errormsg}"
+            else:
+                versionrangestr = binary['csound_version']
+                try:
+                    versionrange = _parse_version(versionrangestr)
+                except ParseError as e:
+                    return f"Invalid version in 'csound_version': {versionrangestr}, error: {e}"
+
+    errors = []
+    errors.append(checkkey(root, "name", valuetype=str))
+    errors.append(checkkey(root, "version", valuetype=str, validatorfunc=validateversion))
+    errors.append(checkkey(root, "opcodes", valuetype=list, validatorfunc=lambda l: '' if isinstance(l, list) and all(isinstance(opcode, str) for opcode in l) else 'Invalid opcode list'))
+    errors.append(checkkey(root, "short_description"))
+    for key in ('short_description', 'author', 'email', 'license', 'repository'):
+        errors.append(checkkey(root, key))
+    errors.append(checkkey(root, "binaries", valuetype=list, validatorfunc=validatebins))
+    allerrors = [error for error in errors if error]
+    return '; '.join(allerrors) if allerrors else ''
 
 
 def _running_from_terminal() -> bool:
@@ -3333,6 +3394,11 @@ def main():
     download_cmd.add_argument('plugin', help='The name of the plugin to download')
     download_cmd.set_defaults(func=cmd_download)
 
+    # validate
+    validate_cmd = subparsers.add_parser("validate", help="Validate a risset.json definition")
+    validate_cmd.add_argument('infile', help="File to validate. By default, a risset.json definition")
+    validate_cmd.set_defaults(func=cmd_validate)
+
     # dev: risset dev opcodesxml
     #      risset dev codesign
     dev_cmd = subparsers.add_parser("dev", help="Commands for developer use")
@@ -3344,6 +3410,7 @@ def main():
                               "opcodes.xml in the csound's manual; "
                               "codesign: code sign all installed plugins (macos only)")
     dev_cmd.set_defaults(func=cmd_dev)
+
 
     args = parser.parse_args()
     _session.debug = args.debug
@@ -3385,9 +3452,10 @@ def main():
     if args.command == 'update':
         sys.exit(0)
     else:
-        ok = args.func(mainindex, args)
-        if not ok:
+        errormsg = args.func(mainindex, args)
+        if errormsg:
             _errormsg(f"Command {args.command} failed")
+            _errormsg(errormsg)
             sys.exit(-1)
         sys.exit(0)
 
