@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import sys
+import importlib.metadata
 
 if (sys.version_info.major, sys.version_info.minor) < (3, 9):
     print("Python 3.9 or higher is needed", file=sys.stderr)
     sys.exit(-1)
 
 if len(sys.argv) >= 2 and (sys.argv[1] == "--version" or sys.argv[1] == "-v"):
-    import importlib.metadata
     print(importlib.metadata.version("risset"))
     sys.exit(0)
 
@@ -3098,8 +3098,10 @@ def cmd_info(idx: MainIndex, args) -> str:
         import time
         lastupdate = int((time.time() - picklefile.stat().st_mtime) / 686400)
 
+
+
     d = {
-        'version': __version__,
+        'version': importlib.metadata.version("risset"),
         'index-version': idx.version,
         'pluginspath': idx.user_plugins_path.as_posix(),
         'rissetroot': RISSET_ROOT.as_posix(),
@@ -3212,9 +3214,7 @@ def validate_definition(infile: str) -> str:
         parts = s.split(".")
         if not 1 <= len(parts) <= 3:
             return f"Invalid version: {s}"
-        try:
-            intparts = [int(part) for part in parts]
-        except ValueError:
+        if not all(part.isdecimal() for part in parts):
             return f"Version parts must be integers, got {s}"
 
     def validate_platform(s):
@@ -3241,8 +3241,11 @@ def validate_definition(infile: str) -> str:
                 versionrangestr = binary['csound_version']
                 try:
                     versionrange = _parse_version(versionrangestr)
+                    if versionrange.contains(5):
+                        return f"Invalid version range: {versionrangestr}"
                 except ParseError as e:
                     return f"Invalid version in 'csound_version': {versionrangestr}, error: {e}"
+
 
     errors = []
     errors.append(check(root, "name", valuetype=str))
