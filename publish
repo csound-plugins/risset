@@ -1,3 +1,0 @@
-#!/bin/bash
-git push
-python3 setup.py sdist && twine upload --skip-existing dist/*
