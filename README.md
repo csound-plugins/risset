@@ -3,7 +3,7 @@
 # risset: a package manager for csound
 
 This is the repository of risset, a package manager for csound external
-plugins and user-defined-opcodes. The index aggregating all available packages is kept 
+plugins and user-defined-opcodes. The index aggregating all available packages is kept
 at [risset-data](https://github.com/csound-plugins/risset-data).
 
 # Installation
@@ -22,11 +22,14 @@ This will install the script "risset" into your path
 
 In certain linux distributions (ubuntu) it is not allowed to install packages to the
 system python. In that case the recommended way is to install risset within
-its own virtual environment via `pipx`:
+its own virtual environment:
 
-```bash
-sudo apt install pipx
-pipx install risset
+Make sure you have `uv` (https://docs.astral.sh/uv/) installed
+(install it via `curl -LsSf https://astral.sh/uv/install.sh | sh`),
+then
+
+```
+uv tool install risset
 ```
 
 ----------------------------------------------------
@@ -37,29 +40,29 @@ pipx install risset
 
 ```bash
 
-
 $ risset list
 
-* else /1.18.2         | Miscellaneous plugins [manual]
-                       |    Path: /home/em/.local/lib/csound/6.0/plugins64/libelse.so
-* pathtools /1.18.2    | Cross-platform path handling and string opcodes [manual]
-                       |    Path: /home/em/.local/lib/csound/6.0/plugins64/libpathtools.so
-* klib /1.18.2         | A hashtable for csound [manual]
-                       |    Path: /home/em/.local/lib/csound/6.0/plugins64/libklib.so
-* beosc /1.18.2        | Band-enhanced oscillators implementing the sine+noise synthesis model [manual]
-                       |    Path: /home/em/.local/lib/csound/6.0/plugins64/libbeosc.so
-* jsfx /1.18.2         | jsfx support for csound [manual]
-                       |    Path: /home/em/.local/lib/csound/6.0/plugins64/libjsfx.so
-* poly /1.18.2         | Multiple (parallel or sequential) instances of an opcode [manual]
-                       |    Path: /home/em/.local/lib/csound/6.0/plugins64/libpoly.so
-* sndmeta /1.18.2      | opcodes using libsndfile [manual]
-                       |    Path: /home/em/.local/lib/csound/6.0/plugins64/libsndmeta.so
-* risset /1.18.2       | Opcodes to access risset package metadata [manual]
-                       |    Path: /home/em/.local/lib/csound/6.0/plugins64/librisset.so
-- vst3 /0.3.0          | Host vst3 plugins in csound
+- else /2.0.0          | Miscellaneous plugins
+- pathtools /2.0.0     | Cross-platform path handling and string opcodes
+- klib /2.0.0          | A hashtable for csound
+- beosc /2.0.0         | Band-enhanced oscillators implementing the sine+noise synthesis model
+- jsfx /2.0.0          | jsfx support for csound
+- poly /2.0.0          | Multiple (parallel or sequential) instances of an opcode
+- sndmeta /2.0.0       | opcodes using libsndfile
+- risset /2.0.0        | Opcodes to access risset package metadata
+- poodle /2.0.0        | Faust plugins ported to csound
+- vst3 /1.1.0          | Host vst3 plugins in csound
+                       |    -- No binaries for linux-x86_64/7000
+                       |       Available binaries: linux-x86_64/csound>=6.18<7.0, windows-x86_64/csound>=6.18<7.0, macos-x86_64/csound>=6.18<7.0, macos-arm64/csound>=6.18<7.0
 - chua /0.1.0          | Implementation of a Chua oscillator
+                       |    -- No binaries for linux-x86_64/7000
+                       |       Available binaries: linux-x86_64/csound>=6.18<7.0, macos-x86_64/csound>=6.18<7.0, macos-arm64/csound>=6.18<7.0
 - hdf5 /0.1.0          | Read/Write signals and arrays to/from an hdf5 file
+                       |    -- No binaries for linux-x86_64/7000
+                       |       Available binaries: linux-x86_64/csound>=6.18<7.0, macos-x86_64/csound>=6.18<7.0, macos-arm64/csound>=6.18<7.0
 - python /0.1.0        | Opcodes to interact with an embedded python interpreter
+                       |    -- No binaries for linux-x86_64/7000
+                       |       Available binaries: linux-x86_64/csound>=6.18<7.0, macos-x86_64/csound>=6.18<7.0, macos-arm64/csound>=6.18<7.0
 
 ```
 
@@ -82,7 +85,7 @@ Author        : Eduardo Moguillansky (eduardo.moguillansky@gmail.com)
 URL           : https://github.com/csound-plugins/csound-plugins.git
 Version       : 1.18.2
 
-Installed     : Unknown (path: /home/em/.local/lib/csound/6.0/plugins64/libpoly.so)
+Installed     : Unknown (path: /home/xx/.local/lib/csound/6.0/plugins64/libpoly.so)
 Manifest      : No manifest (installed manually)
 Abstract      : Multiple (parallel or sequential) instances of an opcode
 Description:
@@ -98,7 +101,7 @@ Binaries:
     * macos-arm64/csound>=7.0
     * windows/csound>=6.17<7.0
     * windows/csound>=7.0
-    
+
 ```
 
 ### Remove a plugin
@@ -364,7 +367,7 @@ At the root of the repository there is an index file `rissetindex.json`, with th
 ```
 
 To add a plugin to the index, just extend the *plugins* dict. The url should point to a valid git repository,
-the path attribute can be used to indicate where risset.json manifest is within this repository. This allows to 
+the path attribute can be used to indicate where risset.json manifest is within this repository. This allows to
 define multiple plugins within one repository.
 
 ## Manifest
