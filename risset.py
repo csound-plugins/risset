@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-__version__ = "2.9.3"
-
 import sys
 
 if (sys.version_info.major, sys.version_info.minor) < (3, 9):
@@ -11,7 +9,8 @@ if (sys.version_info.major, sys.version_info.minor) < (3, 9):
     sys.exit(-1)
 
 if len(sys.argv) >= 2 and (sys.argv[1] == "--version" or sys.argv[1] == "-v"):
-    print(__version__)
+    import importlib.metadata
+    print(importlib.metadata.version("risset"))
     sys.exit(0)
 
 import glob
@@ -166,18 +165,24 @@ def _normalize_platform(s: str) -> str:
     architecture might be missing, so this function resolves,
     for example, 'windows' to 'windows-x86_64'.
 
+    'linux' and 'windows' resolve to 'linux-x86_64' and 'windows-x86_64',
+    'macos' resolves to 'macos-arm64'
+
     Otherwise the platform definition should consist of a pair <os>-<arch>,
     like "macos-arm64" or "linux-x86_64"
 
+    Returns:
+        the normalized platform or an empty string if the given
+        value is not a valid platform
+
     Raises ValueError if the platform is not supported
     """
-    if s in _supported_platforms:
-        return s
+    if s in ('windows', 'linux'):
+        s += '-x86_64'
+    elif s == 'macos':
+        s += '-arm64'
 
-    if s in ('macos', 'windows', 'linux'):
-        return s + '-x86_64'
-
-    raise ValueError(f"Unknown platform '{s}'")
+    return s if s in _supported_platforms else ''
 
 
 def _platform_architecture() -> str:
@@ -1333,12 +1338,10 @@ def _parse_binarydef(binarydef: dict, substitutions: dict[str, str]) -> Binary:
     if not platform:
         raise ParseError(f"Plugin binary should have a platform key. Binary definition: {binarydef}")
 
-    try:
-        platform = _normalize_platform(platform)
-    except ValueError as err:
+    normalized_platform = _normalize_platform(platform)
+    if not normalized_platform:
         raise ParseError(f"Platform '{platform}' not supported. "
-                         f"Possible platforms are {_supported_platforms}. "
-                         f"Original error: {err}")
+                         f"Possible platforms are {_supported_platforms}. ")
 
     url = binarydef.get('url')
     if not url:
@@ -3172,9 +3175,17 @@ def cmd_download(idx: MainIndex, args) -> str:
     _info(f"Downloaded binary for plugin '{plugin.name}' to '{outfile}'")
     return ''
 
-def cmd_validate(idx: MainIndex, args) -> str:
-    """Validate a definition file"""
-    infile = args.infile
+
+def validate_definition(infile: str) -> str:
+    """
+    Validate a risset.json definition
+
+    Args:
+        infile: the file to validate
+
+    Returns:
+        an empty str if ok, a list of errors (separated by ';') otherwise
+    """
     if not os.path.exists(infile):
         return f"validate: file {infile} not found"
     try:
@@ -3183,7 +3194,7 @@ def cmd_validate(idx: MainIndex, args) -> str:
     except json.JSONDecodeError as e:
         return f"validate: Error decoding json file '{infile}': {e}"
 
-    def checkkey(d: dict, key: str, valuetype: type | tuple[type] = str, options: tuple[str, ...] | None = None, validatorfunc=None) -> str:
+    def check(d: dict, key: str, valuetype: type | tuple[type] = str, options=None, validatorfunc=None) -> str:
         if key not in d:
             return f"Key '{key}' not found"
         value = d[key]
@@ -3197,7 +3208,7 @@ def cmd_validate(idx: MainIndex, args) -> str:
                 return errormsg
         return ''
 
-    def validateversion(s):
+    def validate_version(s):
         parts = s.split(".")
         if not 1 <= len(parts) <= 3:
             return f"Invalid version: {s}"
@@ -3206,22 +3217,25 @@ def cmd_validate(idx: MainIndex, args) -> str:
         except ValueError:
             return f"Version parts must be integers, got {s}"
 
-    def validatebins(binaries):
-        allplatforms = ('linux-x86_64', 'windows-x86_64', 'macos-x86_64', 'macos-arm64')
+    def validate_platform(s):
+        if _normalize_platform(s) not in _supported_platforms:
+            return f"Invalid platform '{s}', expected one of {_supported_platforms}"
+
+    def validate_bins(binaries):
         for binary in binaries:
             if not isinstance(binary, dict):
                 return f"Invalid binary definition, expected a dict, got a {binary}"
-            if errormsg := checkkey(binary, "platform", options=allplatforms):
+            if errormsg := check(binary, "platform", validatorfunc=validate_platform):
                 return f"Invalid binary definition: {errormsg}"
-            if errormsg := checkkey(binary, 'url'):
+            if errormsg := check(binary, 'url'):
                 return f"Invalid binary definition: {errormsg}"
             else:
                 url = binary['url']
                 assert isinstance(url, str)
                 if url.endswith('.zip'):
-                    if errormsg := checkkey(binary, 'extractpath'):
+                    if errormsg := check(binary, 'extractpath'):
                         return f"The binary url is a zip file, an `extractpath` key is needed ({url=})"
-            if errormsg := checkkey(binary, "csound_version"):
+            if errormsg := check(binary, "csound_version"):
                 return f"Invalid binary definition: {errormsg}"
             else:
                 versionrangestr = binary['csound_version']
@@ -3231,15 +3245,20 @@ def cmd_validate(idx: MainIndex, args) -> str:
                     return f"Invalid version in 'csound_version': {versionrangestr}, error: {e}"
 
     errors = []
-    errors.append(checkkey(root, "name", valuetype=str))
-    errors.append(checkkey(root, "version", valuetype=str, validatorfunc=validateversion))
-    errors.append(checkkey(root, "opcodes", valuetype=list, validatorfunc=lambda l: '' if isinstance(l, list) and all(isinstance(opcode, str) for opcode in l) else 'Invalid opcode list'))
-    errors.append(checkkey(root, "short_description"))
+    errors.append(check(root, "name", valuetype=str))
+    errors.append(check(root, "version", valuetype=str, validatorfunc=validate_version))
+    errors.append(check(root, "opcodes", valuetype=list, validatorfunc=lambda l: '' if isinstance(l, list) and all(isinstance(opcode, str) for opcode in l) else 'Invalid opcode list'))
+    errors.append(check(root, "short_description"))
     for key in ('short_description', 'author', 'email', 'license', 'repository'):
-        errors.append(checkkey(root, key))
-    errors.append(checkkey(root, "binaries", valuetype=list, validatorfunc=validatebins))
-    allerrors = [error for error in errors if error]
+        errors.append(check(root, key))
+    errors.append(check(root, "binaries", valuetype=list, validatorfunc=validate_bins))
+    allerrors = [f"Error in {infile}: {error}" for error in errors if error]
     return '; '.join(allerrors) if allerrors else ''
+
+
+def cmd_validate(idx: MainIndex, args) -> str:
+    """Validate a definition file"""
+    return validate_definition(args.infile)
 
 
 def _running_from_terminal() -> bool:
