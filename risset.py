@@ -619,7 +619,10 @@ class Binary:
     _csound_version_range: _VersionRange | None = None
 
     def __post_init__(self):
-        assert self.platform in _supported_platforms, f"Invalid platform '{self.platform}'"
+        platform = _normalize_platform(self.platform)
+        if not platform:
+            raise ValueError(f"Invalid platform '{self.platform}', expected one of {_supported_platforms}")
+        self.platform = platform
 
     def csound_version_range(self) -> _VersionRange:
         if self._csound_version_range is None:
