@@ -17,20 +17,24 @@ pip install risset
 
 This will install the script "risset" into your path
 
+In certain systems it is not allowed to install packages to the system python. 
+In that case the recommended way is to install risset within
+its own virtual environment
 
-### Linux
+## MacOS / linux
 
-In certain linux distributions (ubuntu) it is not allowed to install packages to the
-system python. In that case the recommended way is to install risset within
-its own virtual environment:
-
-Make sure you have `uv` (https://docs.astral.sh/uv/) installed
-(install it via `curl -LsSf https://astral.sh/uv/install.sh | sh`),
-then
-
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install --upgrade risset
 ```
-uv tool install risset
+
+## Windows
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+uv tool install --upgrade risset
 ```
+
 
 ----------------------------------------------------
 
