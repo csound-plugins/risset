@@ -20,7 +20,7 @@ classifiers = [
 requires-python = ">=3.9"
 keywords = ["csound"]
 
-dependencies = ["pygments", "ctcsound7>=0.7.0", "mkdocs", "requests", "filetype"]
+dependencies = ["pygments", "libcsound>=0.9.1", "mkdocs", "requests", "filetype"]
 
 [project.scripts]
 risset = "risset:main"

@@ -217,8 +217,8 @@ def _csoundlib_version() -> tuple[int, int]:
 
     This version can differ from the version of the installed csound binary
     """
-    import ctcsound7
-    versionid = ctcsound7.VERSION
+    import libcsound
+    versionid = libcsound.VERSION
     major = versionid // 1000
     minor = (versionid - major*1000) // 10
     return major, minor
@@ -1024,6 +1024,12 @@ def _csound_opcodes(method='api') -> set[str]:
     Args:
         method: one of 'csound', 'api'
     """
+    if method == 'api':
+        try:
+            import libcsound
+        except ImportError:
+            method = 'csound'
+    
     if method == 'csound':
         csound_bin = _get_csound_binary("csound")
         if not csound_bin:
@@ -1039,8 +1045,8 @@ def _csound_opcodes(method='api') -> set[str]:
             opcodes.append(parts[0])
         return set(opcodes)
     elif method == 'api':
-        import ctcsound7
-        cs = ctcsound7.Csound()
+        import libcsound
+        cs = libcsound.Csound()
         return set(opcode.name for opcode in cs.getOpcodes())
     else:
         raise ValueError(f"Method '{method}' unknown, possible methods: 'csound', 'api'")
