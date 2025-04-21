@@ -227,5 +227,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: artifact-macos-${{ matrix.python-version }}-${{ strategy.job-index }        
+          name: artifact-macos-${{ matrix.python-version }}-${{ strategy.job-index }}        
           path: artifacts/*
