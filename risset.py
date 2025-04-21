@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import sys
 import importlib.metadata
+import sys
 
 if (sys.version_info.major, sys.version_info.minor) < (3, 9):
     print("Python 3.9 or higher is needed", file=sys.stderr)
@@ -13,33 +13,29 @@ if len(sys.argv) >= 2 and (sys.argv[1] == "--version" or sys.argv[1] == "-v"):
     print(importlib.metadata.version("risset"))
     sys.exit(0)
 
-import glob
-import os
-import stat
 import argparse
-import json
-import tempfile
-import shutil
-import subprocess
-import textwrap
 import fnmatch
-import pprint
+import glob
+import inspect as _inspect
+import json
+import os
 import platform
-from dataclasses import dataclass, asdict as _asdict
-
-import requests
+import re
+import shutil
+import stat
+import subprocess
+import tempfile
+import textwrap
+import urllib.error
 import urllib.parse
 import urllib.request
-import urllib.error
+from dataclasses import asdict as _asdict
+from dataclasses import dataclass
 from pathlib import Path
-from zipfile import ZipFile
-import inspect as _inspect
-import re
-from string import Template as _Template
-
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
-    from typing import Any
+    from typing import Any, Callable
 
 
 class PlatformNotSupportedError(Exception):
@@ -118,7 +114,7 @@ _entitlements_str = r"""
 """
 
 
-def _macos_save_entitlements() -> Path:
+def _macos_save_entitlements(session: _Session) -> Path:
     path = MACOS_ENTITLEMENTS_PATH
     _ensure_parent_exists(path)
     if not _session.entitlements_saved:
@@ -128,8 +124,8 @@ def _macos_save_entitlements() -> Path:
         plutil = shutil.which('plutil')
         if plutil:
             _debug(f"Verifying that the entitlements file '{path}' is a valid plist")
-            _subproc_call([plutil, path])
-        _session.entitlements_saved = True
+            _subproc_call([plutil, path.as_posix()])
+        session.entitlements_saved = True
         _debug(f"Saved entitlements file to {path}")
         _debug(f"Entitlements:\n{open(path).read()}\n------------ end entitlements")
 
@@ -149,10 +145,10 @@ def macos_codesign(dylibpaths: list[str], signature='-') -> None:
     """
     if not shutil.which('codesign'):
         raise RuntimeError("Could not find the binary 'codesign' in the path")
-    entitlements_path = _macos_save_entitlements()
+    entitlements_path = _macos_save_entitlements(_session)
     assert os.path.exists(entitlements_path)
     for dylibpath in dylibpaths:
-        _subproc_call(['codesign', '--force', '--sign', signature, '--entitlements', entitlements_path, dylibpath])
+        _subproc_call(['codesign', '--force', '--sign', signature, '--entitlements', entitlements_path.as_posix(), dylibpath])
         _debug("Verifying code signing")
         _subproc_call(['codesign', '--display', '--verbose', dylibpath])
 
@@ -417,8 +413,8 @@ def _mainindex_retrieve(days_threshold=10) -> MainIndex | None:
     picklefile = _MAININDEX_PICKLE_FILE
     if not picklefile.exists():
         return None
-    import time
     import pickle
+    import time
     days_since_last_modification = (picklefile.stat().st_mtime - time.time()) / 86400
     if days_since_last_modification > days_threshold:
         return None
@@ -948,6 +944,7 @@ def _zip_extract_folder(zipfile: Path,
     foldername = os.path.split(folder)[1]
     root = Path(tempfile.mktemp())
     root.mkdir(parents=True, exist_ok=True)
+    from zipfile import ZipFile
     z = ZipFile(zipfile, 'r')
     pattern = folder + '/*'
     extracted = [z.extract(name, root) for name in z.namelist()
@@ -980,6 +977,7 @@ def _zip_extract(zipfile: Path, patterns: list[str]) -> list[Path]:
         relationship between input and output
     """
     outfolder = Path(tempfile.gettempdir())
+    from zipfile import ZipFile
     z = ZipFile(zipfile, 'r')
     out: list[Path] = []
     zipped = z.namelist()
@@ -1029,7 +1027,7 @@ def _csound_opcodes(method='api') -> set[str]:
             import libcsound
         except ImportError:
             method = 'csound'
-    
+
     if method == 'csound':
         csound_bin = _get_csound_binary("csound")
         if not csound_bin:
@@ -1255,7 +1253,7 @@ def _find_system_plugins_path(possible_paths: list[Path], majorversion) -> Path 
         else:
             _debug(f">>> Path exists, but it does not seem to be the systems plugin path\n"
                    f">>> ({dll} was not found there)")
-            _debug(f">>> Plugins found here: ", ', '.join(plugin.name for plugin in plugins))
+            _debug(">>> Plugins found here: ", ', '.join(plugin.name for plugin in plugins))
     return None
 
 
@@ -1315,7 +1313,8 @@ def _expand_substitutions(s: str, substitutions: dict[str, str]) -> str:
     """
     Expands variables of the form $var or ${var}
     """
-    t = _Template(s)
+    from string import Template
+    t = Template(s)
     return t.substitute(substitutions)
 
 
@@ -1373,7 +1372,7 @@ def _parse_asset(assetdef: dict, defaultsource: str) -> Asset:
     source = assetdef.get('url', defaultsource)
     extractpath = assetdef.get('extractpath') or assetdef.get('path')
     if not source and not extractpath:
-        raise ParseError(f"Asset definition should have an URL or an extractpath key")
+        raise ParseError("Asset definition should have an URL or an extractpath key")
     paths = extractpath.split(";") if extractpath else []
     return Asset(source=source, patterns=paths, platform=assetdef.get('platform', 'all'), name=assetdef.get('name', ''))
 
@@ -1402,8 +1401,9 @@ def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
     binaries: list[Binary] = []
     binarydefs = _enforce_key(d, 'binaries')
     if not isinstance(binarydefs, list):
+        import pprint
         s = pprint.pformat(binarydefs)
-        _errormsg(f"Expected a list of binary definitions, got: ")
+        _errormsg("Expected a list of binary definitions, got: ")
         _errormsg(s)
         raise SchemaError(f"Parsing 'binaries', expected a list of binary definitions, got a {type(binarydefs)}")
     for binarydef in binarydefs:
@@ -1640,6 +1640,7 @@ def _download_file(url: str, destination_folder='', cache=True) -> Path:
         else:
             return cachedpath
     _debug("Downloading url", url)
+    import requests
     try:
         resp = requests.get(url, verify=True, allow_redirects=True)
         contentdisp = resp.headers.get('content-disposition')
@@ -1680,7 +1681,7 @@ def _check_mimetype(path: Path) -> str:
         '.dll': 'application/x-executable',
     }
     if ext not in mimes:
-        return "Unknown suffix"
+        return f"Unknown suffix: {ext}"
     if out.mime != mimes[ext]:
         return f"Expected {mimes[ext]}, got {out.mime}"
     return ''
@@ -1884,7 +1885,7 @@ class MainIndex:
                 try:
                     _debug(f"Parsing plugin definition for {name}")
                     plugin = self._parse_plugin(name)
-                    self.plugins[name] = plugin
+                    self.plugins[name.lower()] = plugin
                 except Exception as e:
                     if stop_on_errors:
                         raise e
@@ -2182,6 +2183,11 @@ class MainIndex:
         if check_mimetype:
             errormsg = _check_mimetype(path)
             if errormsg:
+                # Check if it is a "Not Found" message from github downloads
+                with open(path, "r") as f:
+                    line = f.readline()
+                    if line.strip() == "Not Found":
+                        raise RuntimeError(f"The downloaded file {path} is not a zip file. The url ('{bindef.url}') pointed to an invalid file")
                 raise RuntimeError(f"The downloaded file {path} has an incorrect mimetype: {errormsg}")
 
         if path.suffix in ('.so', '.dll', '.dylib'):
@@ -2462,17 +2468,17 @@ class MainIndex:
             print(f"{symbol} {leftcol.ljust(leftcolwidth)} | {descr} {status}")
             if extra_lines:
                 for line in extra_lines:
-                    print(" " * leftcolwidth + f"   |   ", line)
+                    print(" " * leftcolwidth + "   |   ", line)
         print()
         return True
 
-    def show_plugin(self, pluginname: str) -> bool:
+    def show_plugin(self, pluginname: str, binary_url=False) -> bool:
         """
         Show info about a plugin
 
         Returns True on success
         """
-        plugdef = self.plugins.get(pluginname)
+        plugdef = self.plugins.get(pluginname.lower())
         if plugdef is None:
             _errormsg(f"Plugin '{pluginname}' unknown\n"
                       f"Known plugins: {', '.join(self.plugins.keys())}")
@@ -2495,7 +2501,7 @@ class MainIndex:
             for line in textwrap.wrap(plugdef.long_description, 72):
                 print(" " * 3, line)
             # print(textwrap.wrapindent("     ", plugdef.long_description))
-        print(f"Opcodes:")
+        print("Opcodes:")
         opcstrs = textwrap.wrap(", ".join(plugdef.opcodes), 72)
         for s in opcstrs:
             print("   ", s)
@@ -2503,7 +2509,13 @@ class MainIndex:
         if plugdef.binaries:
             print("Binaries:")
             for binary in plugdef.binaries:
-                print(f"    * {binary.platform}/csound{binary.csound_version}")
+                if not binary_url:
+                    print(f"    * {binary.platform}/csound{binary.csound_version}")
+                else:
+                    url = binary.url
+                    if binary.extractpath:
+                        url += "/" + binary.extractpath
+                    print(f"    * {binary.platform}/csound{binary.csound_version}, {url}")
 
         if plugdef.assets:
             print("Assets:")
@@ -2867,7 +2879,7 @@ def cmd_list(mainindex: MainIndex, args) -> str:
                 json.dump(d, f, indent=2)
         else:
             print(json.dumps(d, indent=2))
-        return True
+        return ''
     else:
         header = True
         if args.oneline or args.nameonly or args.noheader:
@@ -2881,7 +2893,7 @@ def cmd_show(index: MainIndex, args) -> str:
     """
     Returns True on success
     """
-    ok = index.show_plugin(args.plugin)
+    ok = index.show_plugin(args.plugin, binary_url=args.full)
     return '' if ok else "Errors while showing plugins"
 
 
@@ -3205,7 +3217,7 @@ def validate_definition(infile: str) -> str:
     except json.JSONDecodeError as e:
         return f"validate: Error decoding json file '{infile}': {e}"
 
-    def check(d: dict, key: str, valuetype: type | tuple[type] = str, options=None, validatorfunc=None) -> str:
+    def check(d: dict, key: str, valuetype: type | tuple[type] = str, options=None, validator: Callable[[Any], str | None] = None) -> str:
         if key not in d:
             return f"Key '{key}' not found"
         value = d[key]
@@ -3213,8 +3225,8 @@ def validate_definition(infile: str) -> str:
             return f"Expected a value of type {valuetype}, got {value}"
         if options and value not in options:
             return f"Expected one of {options}, got {value}"
-        if validatorfunc:
-            errormsg = validatorfunc(value)
+        if validator:
+            errormsg = validator(value)
             if errormsg:
                 return errormsg
         return ''
@@ -3234,7 +3246,7 @@ def validate_definition(infile: str) -> str:
         for binary in binaries:
             if not isinstance(binary, dict):
                 return f"Invalid binary definition, expected a dict, got a {binary}"
-            if errormsg := check(binary, "platform", validatorfunc=validate_platform):
+            if errormsg := check(binary, "platform", validator=validate_platform):
                 return f"Invalid binary definition: {errormsg}"
             if errormsg := check(binary, 'url'):
                 return f"Invalid binary definition: {errormsg}"
@@ -3258,12 +3270,12 @@ def validate_definition(infile: str) -> str:
 
     errors = []
     errors.append(check(root, "name", valuetype=str))
-    errors.append(check(root, "version", valuetype=str, validatorfunc=validate_version))
-    errors.append(check(root, "opcodes", valuetype=list, validatorfunc=lambda l: '' if isinstance(l, list) and all(isinstance(opcode, str) for opcode in l) else 'Invalid opcode list'))
+    errors.append(check(root, "version", valuetype=str, validator=validate_version))
+    errors.append(check(root, "opcodes", valuetype=list, validator=lambda opcodes: '' if isinstance(opcodes, list) and all(isinstance(opc, str) for opc in opcodes) else 'Invalid opcode list'))  # noqa: E741
     errors.append(check(root, "short_description"))
     for key in ('short_description', 'author', 'email', 'license', 'repository'):
         errors.append(check(root, key))
-    errors.append(check(root, "binaries", valuetype=list, validatorfunc=validate_bins))
+    errors.append(check(root, "binaries", valuetype=list, validator=validate_bins))
     allerrors = [f"Error in {infile}: {error}" for error in errors if error]
     return '; '.join(allerrors) if allerrors else ''
 
@@ -3288,8 +3300,8 @@ def _show_markdown_file(path: Path, style='dark') -> None:
         return
 
     from pygments import highlight
-    from pygments.lexers import MarkdownLexer
     from pygments.formatters import TerminalTrueColorFormatter
+    from pygments.lexers import MarkdownLexer
     from pygments.styles import STYLE_MAP
     # from pygments.formatters import TerminalFormatter
     code = open(path).read()
@@ -3358,6 +3370,7 @@ def main():
 
     # show command
     show_cmd = subparsers.add_parser("show", help="Show information about a plugin")
+    flag(show_cmd, "--full", help="Show additional information about a plugin")
     show_cmd.add_argument("plugin", help="Plugin to gather information about")
     show_cmd.set_defaults(func=cmd_show)
 
@@ -3448,7 +3461,8 @@ def main():
     _session.stop_on_errors = args.stoponerror
 
     if args.version:
-        print(__version__)
+        from importlib.metadata import version
+        print(version("risset"))
         sys.exit(0)
 
     if not args.command:
