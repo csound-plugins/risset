@@ -7,7 +7,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9"]
+        python-version: ["3.10", "3.12"]
         csound-branch: ["csound6", "develop"]
     steps:
       - uses: actions/checkout@v3
@@ -68,8 +68,9 @@ jobs:
           risset info --full
           risset makedocs
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
+          name: artifact-linux-${{ matrix.python-version }}-${{ strategy.job-index }}
           path: artifacts/*
 
   testwin:
@@ -78,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9"]
+        python-version: ["3.10", "3.12"]
         csound-branch: ["csound6", "develop"]
     steps:
       - uses: actions/checkout@v3
@@ -159,7 +160,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9"]
+        python-version: ["3.10", "3.12"]
         arch: ["arm64"]
         csound-branch: ["csound6", "develop"]
     steps:
@@ -224,6 +225,7 @@ jobs:
           risset info --full
           risset makedocs
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
+          name: artifact-macos-${{ matrix.python-version }}-${{ strategy.job-index }        
           path: artifacts/*
