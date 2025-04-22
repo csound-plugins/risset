@@ -21,9 +21,9 @@ jobs:
         run: |
           git clone -b csound6 https://github.com/csound/csound --depth 1
           cd csound
-          sudo apt-get update && sudo apt-get install cmake libsndfile1-dev libasound2-dev libjack-dev portaudio19-dev libportmidi-dev libpulse-dev swig liblua5.1-0-dev default-jdk libfltk1.1-dev libfluidsynth-dev liblo-dev fluid ladspa-sdk libpng-dev dssi-dev libstk0-dev libgmm++-dev bison flex libportsmf-dev libeigen3-dev libcunit1-dev
+          sudo apt-get update && sudo apt-get install cmake libsndfile1-dev libasound2-dev libjack-dev portaudio19-dev libportmidi-dev libpulse-dev default-jdk liblo-dev fluid libpng-dev libgmm++-dev bison flex libportsmf-dev libcunit1-dev
           mkdir build && cd build
-          cmake .. -DUSE_MP3=0
+          cmake .. -DUSE_MP3=0 -DBUILD_TESTS=OFF -DBUILD_LUA_INTERFACE=OFF -DBUILD_DSSI_OPCODES=OFF -DBUILD_JAVA_INTERFACE=OFF -DINSTALL_PYTHON_INTERFACE=OFF
           cmake --build . --parallel
           sudo make install
           export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
@@ -36,9 +36,9 @@ jobs:
         run: |
           git clone -b develop https://github.com/csound/csound --depth 1
           cd csound
-          sudo apt-get update && sudo apt-get install cmake libsndfile1-dev libasound2-dev libjack-dev portaudio19-dev libportmidi-dev libpulse-dev swig liblua5.1-0-dev default-jdk libfltk1.1-dev libfluidsynth-dev liblo-dev fluid ladspa-sdk libpng-dev dssi-dev libstk0-dev libgmm++-dev bison flex libportsmf-dev libeigen3-dev libcunit1-dev
+          sudo apt-get update && sudo apt-get install cmake libsndfile1-dev libasound2-dev libjack-dev portaudio19-dev libportmidi-dev libpulse-dev swig default-jdk liblo-dev libpng-dev libgmm++-dev bison flex libportsmf-dev libcunit1-dev
           mkdir build && cd build
-          cmake .. -DUSE_MP3=0
+          cmake .. -DUSE_MP3=0 -DBUILD_LUA_INTERFACE=OFF -DBUILD_DSSI_OPCODES=OFF -DBUILD_JAVA_INTERFACE=OFF
           cmake --build . --parallel
           sudo make install
           export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
