@@ -3133,6 +3133,7 @@ def cmd_info(idx: MainIndex, args) -> str:
         'datarepo': RISSET_DATAREPO_LOCALPATH.as_posix(),
         'opcodesxml': (RISSET_ROOT / "opcodes.xml").as_posix(),
         'days-since-update': lastupdate,
+        'csound-version': ".".join(str(part) for part in _session.csound_version_tuple),
         'installed-plugins': [plugin.name for plugin in idx.plugins.values()
                               if idx.is_plugin_installed(plugin, check=False)]
     }

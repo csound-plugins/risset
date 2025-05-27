@@ -8,31 +8,43 @@ at [risset-data](https://github.com/csound-plugins/risset-data).
 
 # Installation
 
-`risset` depends only on `git` and `python3` (>= 3.9) being installed.
+Outside of **csound**, *risset* depends only on **git** and **python** (>= 3.9) 
+being installed.
+*risset* itself is a python program and can be installed as a any
+other python package. In general, The most convenient way to install risset is
+via [uv]( https://astral.sh/uv).
+
+
+## Linux
 
 
 ```bash
-pip install risset
+
+# Install uv itself
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install risset
+uv tool install risset
 ```
 
-This will install the script "risset" into your path
-
-In certain systems it is not allowed to install packages to the system python. 
-In that case the recommended way is to install risset within
-its own virtual environment
 
 ## MacOS / linux
 
 ```bash
+
+# Install uv itself
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv tool install --upgrade risset
+
+# Install risset
+uv tool install risset
 ```
 
 ## Windows
 
 ```powershell
+
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-uv tool install --upgrade risset
+uv tool install risset
 ```
 
 
@@ -74,7 +86,7 @@ $ risset list
 
 ```bash
 
-$ risset install else jsfx
+$ risset install else poly
 
 ```
 
@@ -116,7 +128,7 @@ $ risset remove poly
 
 ```
 
-### See manual page for an opcode (installed or not)
+### Show manual page for an opcode (installed or not)
 
 ```bash
 $ risset man poly
@@ -325,14 +337,8 @@ Documentation for all plugins can be found here: https://csound-plugins.github.i
 
 # Upgrading risset
 
-If installed via `pip`, do:
-
     pip install risset -U
 
-If installed via `git`, go to the repository and do:
-
-    git pull
-    python setup.py install
 
 
 -----
