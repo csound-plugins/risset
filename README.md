@@ -25,6 +25,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install risset
 uv tool install risset
+
+# To upgrade risset itself:
+uv tool upgrade risset
 ```
 
 
@@ -37,6 +40,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install risset
 uv tool install risset
+
+# To upgrade risset itself:
+uv tool upgrade risset
 ```
 
 ## Windows
@@ -44,7 +50,12 @@ uv tool install risset
 ```powershell
 
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
 uv tool install risset
+
+# To upgrade risset itself:
+uv tool upgrade risset
+
 ```
 
 
