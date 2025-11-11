@@ -247,7 +247,7 @@ Remove an installed plugin
     $ risset remove <plugin>
 
 
-    #### documentation
+### man 
 
 Open man page as markdown in the command line
 
@@ -267,13 +267,7 @@ Open the html man page in the default browser:
 
     $ risset man --html <opcode>
 
-Generate/update documentation:
-
-    $ risset makedocs
-
-Build the documentation for all defined plugins. This depends on **mkdocs** being installed
-
-
+    
 ### upgrade
 
     $ risset upgrade
@@ -338,18 +332,22 @@ and documentation
 * `--outfile OUTFILE`: Save output to this path
 * `--full`: Include all available information
 
+
+### makedocs
+
+Generate/update documentation:
+
+    $ risset makedocs
+
+Build the documentation for all defined plugins. This depends on **mkdocs** being installed
+
+
+
 -------
 
 # Plugin Documentation
 
 Documentation for all plugins can be found here: https://csound-plugins.github.io/risset-docs/
-
--------
-
-# Upgrading risset
-
-    pip install risset -U
-
 
 
 -----
@@ -396,4 +394,4 @@ define multiple plugins within one repository.
 Each plugin has an accompanying manifest in the .json format. The name of this file
 is always `risset.json`
 See one of the examples in https://github.com/csound-plugins/csound-plugins/tree/master/src for
-more information about the manifest
+more information 
