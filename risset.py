@@ -3435,7 +3435,7 @@ def main():
     download_cmd = subparsers.add_parser('download', help='Download a plugin')
     download_cmd.add_argument('--path', help='Directory to download the plugin to (default: current directory)')
     download_cmd.add_argument('--platform', help='The platform of the plugin to download (default: current platform)',
-                              choices=['linux', 'macos', 'window', 'macos-arm64', 'linux-arm64'])
+                              choices=['linux', 'macos', 'windows', 'macos-arm64', 'linux-arm64'])
     download_cmd.add_argument('plugin', help='The name of the plugin to download')
     download_cmd.set_defaults(func=cmd_download)
 
