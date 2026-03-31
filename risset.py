@@ -3179,6 +3179,8 @@ def cmd_download(idx: MainIndex, args) -> str:
     platformid = args.platform
     if not platformid:
         platformid = _session.platformid
+    else:
+        platformid = _normalize_platform(platformid)
 
     plugin = idx.plugins.get(args.plugin)
     if plugin is None:
