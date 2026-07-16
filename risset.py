@@ -26,9 +26,7 @@ import stat
 import subprocess
 import tempfile
 import textwrap
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import asdict as _asdict
 from dataclasses import dataclass
 from pathlib import Path
