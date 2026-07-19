@@ -206,13 +206,30 @@ def _platform_architecture() -> str:
     raise RuntimeError(f"** Architecture not supported (machine='{machine}', {bits=}, {linkage=})")
 
 
-def _csoundlib_version() -> tuple[int, int]:
+def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
     """Returns a tuple (major, minor) using the csound api
 
     This version can differ from the version of the installed csound binary
+
+    Args:
+        libcsoundpath: the path to libcsoun64 if using an ad-hoc installation
+
+    Returns:
+        the version as (major: int, minor: int) tuple
     """
-    import libcsound
-    versionid = libcsound.VERSION
+    if libcsoundpath:
+        if not os.path.exists(libcsoundpath):
+            raise IOError(f"Given path '{libcsoundpath}' does not exist")
+
+        import ctypes
+        try:
+            libcsound = ctypes.CDLL(libcsoundpath)
+            versionid = libcsound.CsoundGetVersion()
+        except OSError as e:
+            raise IOError(f"Could not load libcsound from '{libcsoundpath}': {e}")
+    else:
+        import libcsound
+        versionid = libcsound.VERSION
     major = versionid // 1000
     minor = (versionid - major*1000) // 10
     return major, minor
@@ -918,8 +935,13 @@ def user_plugins_path(version: int | tuple[int, int] | None = None) -> Path:
                         f"tuple (6, 0) or None to use the installed version, "
                         f"got {version}")
     cs_user_plugindir = os.getenv("CS_USER_PLUGINDIR")
-    if cs_user_plugindir:
-        out = Path(cs_user_plugindir)
+
+    if cs_user_plugindir is not None and os.path.exists(cs_user_plugindir):
+        return Path(cs_user_plugindir)
+    key = f'user_plugins_path_{major}.{minor}'
+    if path := _session.cache.get(key):
+        assert isinstance(path, Path)
+        return path
     else:
         pluginsdir = {
             'linux': f'$HOME/.local/lib/csound/{major}.{minor}/plugins64',
@@ -927,7 +949,8 @@ def user_plugins_path(version: int | tuple[int, int] | None = None) -> Path:
             'darwin': f'$HOME/Library/csound/{major}.{minor}/plugins64'
         }[sys.platform]
         out = Path(os.path.expandvars(pluginsdir))
-    return out
+        _session.cache[key] = out
+        return out
 
 
 def _is_glob(s: str) -> bool:
@@ -1013,39 +1036,29 @@ def _zip_extract_file(zipfile: Path, extractpath: str) -> Path:
     return _zip_extract(zipfile, [extractpath])[0]
 
 
-def _csound_opcodes(method='api') -> set[str]:
+def _csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='') -> set[str]:
     """
     Returns a set of installed opcodes
 
     Args:
-        method: one of 'csound', 'api'
-    """
-    if method == 'api':
-        try:
-            import libcsound
-        except ImportError:
-            method = 'csound'
+        opcode_dir: overrides the path to search for plugins distributed with csound
+        libcsound_path: path to a custom libcsound64 dll
+        user_plugins_dur: path to a custom path for user installed plugins
 
-    if method == 'csound':
-        csound_bin = _get_csound_binary("csound")
-        if not csound_bin:
-            raise RuntimeError("Did not find csound binary")
-        proc = subprocess.run([csound_bin, "-z1"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        txt = proc.stdout.decode('ascii')
-        opcodes = []
-        for line in txt.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split()
-            opcodes.append(parts[0])
-        return set(opcodes)
-    elif method == 'api':
-        import libcsound
-        cs = libcsound.Csound()
-        return set(opcode.name for opcode in cs.getOpcodes())
-    else:
-        raise ValueError(f"Method '{method}' unknown, possible methods: 'csound', 'api'")
+    Returns:
+        a set of strings with the names of all installed opcodes
+    """
+    oldenv = os.environ.copy()
+    if libcsound_path:
+        os.environ['LIBCSOUNDPATH'] = libcsound_path
+    if user_plugins_dir:
+        os.environ['CS_USER_PLUGINDIR'] = user_plugins_dir
+
+    import libcsound
+    cs = libcsound.Csound(opcodeDir=opcode_dir)
+    out = set(opcode.name for opcode in cs.getOpcodes())
+    os.environ.update(oldenv)
+    return out
 
 
 def _plugin_extension() -> str:
@@ -1728,23 +1741,44 @@ def default_system_plugins_path(major: int | None = None, minor=0) -> list[Path]
 def system_plugins_path(majorversion: int | None = None) -> Path | None:
     """
     Get the path were system plugins are installed.
+
+    The env variable OPCODEXDIR64 has priority
     """
     if majorversion is None:
         majorversion = _session.csound_version_tuple[0]
     elif majorversion != _session.csound_version_tuple[0]:
         _debug(f"Queryng system plugin path for csound version {majorversion}, but "
                f"csound's version is {_session.csound_version}")
+    assert majorversion is not None
     if (out := _session.cache.get(f'system_plugins_path_{majorversion}', _UNSET)) is _UNSET:
         _session.cache[f'system_plugins_path_{majorversion}'] = out = _system_plugins_path(majorversion=majorversion)
     return out
 
 
-def _system_plugins_path(majorversion: int) -> Path | None:
+def _envvar_opcodedir(majorversion: int) -> tuple[str | None, str]:
+    """
+    Returns the value of the envarionment variable for the opcodedir
+
+    The varname is OPCODE6DIR64 for csound 6 or OPCODE7DIR64 for csound 7
+    32 bit versions are not supported at the moment
+
+    Returns:
+        a tuple (value: str | None, varname: str). We differentiate the empty
+        string from None, which means that the variable is unset
+    """
     assert majorversion in (6, 7)
-    opcodedir64 = f"OPCODE{majorversion}DIR64"
-    opcodedir = os.getenv(opcodedir64)
+    varname = f"OPCODE{majorversion}DIR64"
+    value = os.getenv(varname)
+    return value, varname
+
+
+def _system_plugins_path(majorversion: int) -> Path | None:
+    if not majorversion:
+        majorversion = _session.csound_version_tuple[0]
+    assert majorversion in (6, 7)
+    opcodedir, varname = _envvar_opcodedir(majorversion=majorversion)
     if opcodedir:
-        _debug(f"Env variable {opcodedir64}, set to {opcodedir}")
+        _debug(f"Env variable {varname}, set to {opcodedir}")
         possible_paths = [Path(p) for p in opcodedir.split(_get_path_separator())]
     else:
         possible_paths = default_system_plugins_path(major=majorversion)
@@ -1758,7 +1792,7 @@ def _system_plugins_path(majorversion: int) -> Path | None:
     return out
 
 
-def user_installed_dlls(majorversion: int | None = None) -> list[Path]:
+def user_installed_dlls(majorversion: int | None = None, pluginspath: str | Path = '') -> list[Path]:
     """
     Return a list of plugins installed at the user plugin path.
     """
@@ -1767,10 +1801,9 @@ def user_installed_dlls(majorversion: int | None = None) -> list[Path]:
     elif majorversion != _session.csound_version_tuple[0]:
         _debug(f"Querying installed dlls for csound version {majorversion}, "
                f"csound's version is {_session.csound_version_tuple}")
-    if (out := _session.cache.get(f'user_installed_dlls_{majorversion}', _UNSET)) is _UNSET:
-        path = user_plugins_path(version=majorversion)
-        out = list(path.glob("*" + _plugin_extension())) if path and path.exists() else []
-        _session.cache[f'user_installed_dlls_{majorversion}'] = out
+
+    path = pluginspath or user_plugins_path(version=majorversion)
+    out = list(path.glob("*" + _plugin_extension())) if path and path.exists() else []
     return out
 
 
@@ -1792,46 +1825,59 @@ class MainIndex:
     This class holds risset's main index
     """
     def __init__(self,
-                 datarepo: Path | None = None,
+                 data_repo: Path | None = None,
                  update=False,
-                 majorversion: int | None = None):
+                 major_version: int | None = None,
+                 plugins_path: Path | str = ''):
         """
         Args:
-            datarepo: the local path to clone the git main index repository to
+            data_repo: the local path to clone the git main index repository to
             update: if True, update index prior to parsing
+            plugins_path: path to the user plugins path, if this is not the default.
         """
-        if majorversion is None:
+        if major_version is None:
             # major, minor = _csound_version()
             major, minor = _csoundlib_version()
             if not (major == 6 or major == 7):
                 raise RuntimeError(f"Csound version {major}.{minor} not supported")
-            majorversion = major
+            major_version = major
 
-        if datarepo is None:
-            datarepo = RISSET_ROOT / 'risset-data'
-        else:
-            assert isinstance(datarepo, Path)
-        self.indexfile = datarepo / "rissetindex.json"
-        if not datarepo.exists():
+        if data_repo is None:
+            data_repo = RISSET_ROOT / 'risset-data'
+        assert isinstance(data_repo, Path)
+        assert isinstance(major_version, int)
+        self.indexfile = data_repo / "rissetindex.json"
+        if not data_repo.exists():
             updateindex = False
-            _git_clone_into(INDEX_GIT_REPOSITORY, datarepo, depth=1)
+            _git_clone_into(INDEX_GIT_REPOSITORY, data_repo, depth=1)
         else:
             updateindex = update
-        assert datarepo.exists()
-        assert _is_git_repo(datarepo)
+        assert data_repo.exists()
+        assert _is_git_repo(data_repo)
         assert self.indexfile.exists(), f"Main index file not found, searched: {self.indexfile}"
 
-        self.datarepo: Path = datarepo
-
-        self.majorversion: int = majorversion
-
+        self.datarepo: Path = data_repo
+        self.majorversion: int = major_version
         self.pluginsources: dict[str, IndexItem] = {}
         self.plugins: dict[str, Plugin] = {}
         self._cache: dict[str, Any] = {}
+        self.user_plugins_path = Path(plugins_path) if plugins_path else user_plugins_path(version=self.majorversion)
+        self.system_plugins_path = system_plugins_path(majorversion=self.majorversion)
         self._parse_index(updateindex=updateindex, updateplugins=update, stop_on_errors=False)
-        self.user_plugins_path = user_plugins_path(version=self.majorversion)
-        if update:
-            self.serialize()
+        assert not self._cache
+        _debug(f"User plugins path: {self.user_plugins_path}")
+        if update or not os.path.exists(_MAININDEX_PICKLE_FILE):
+            if self.is_custom():
+                _debug(f"Current environment is not the default, not serializing: '{self.user_plugins_path=}', {self.system_plugins_path=}")
+            else:
+                self.serialize()
+
+    def is_custom(self) -> bool:
+        """
+        Returns True if the user has a custom plugins path or has set the OPCODE6DIR64/OPCODE7DIR64 env variable
+        """
+        return (self.user_plugins_path != user_plugins_path(version=self.majorversion) or
+                _envvar_opcodedir(self.majorversion)[0] is not None)
 
     def _parse_index(self, updateindex=False, updateplugins=False, stop_on_errors=True) -> None:
         """
@@ -1867,6 +1913,7 @@ class MainIndex:
                 _errormsg(f"Invalid plugin source definition for plugin {name}: {plugindef}")
                 raise ValueError(f"Error while parsing the risset index. "
                                  f"Plugin {name} does not define a url")
+            assert isinstance(url, str)
             assert _is_git_url(url), f"url for plugin {name} is not a git repository: {url}"
             path = plugindef.get('path', '')
             pluginsource = IndexItem(name=name, url=url, path=path)
@@ -1943,13 +1990,19 @@ class MainIndex:
         """
         Returns a dict mapping dll name to (installed_path: str, user_installed: bool)
         """
-        user_dlls = user_installed_dlls()
+        cachekey = 'installed_dlls'
+        if (db := self._cache.get(cachekey)) is not None:
+            assert isinstance(db, dict)
+            return db
+        user_dlls = user_installed_dlls(pluginspath=self.user_plugins_path)
         system_dlls = system_installed_dlls()
         db = {}
         for dll in user_dlls:
             db[dll.name] = (dll, True)
         for dll in system_dlls:
             db[dll.name] = (dll, False)
+        assert isinstance(db, dict)
+        self._cache[cachekey] = db
         return db
 
     def installed_path_for_dll(self, binary: str) -> tuple[Path | None, bool]:
@@ -1966,6 +2019,7 @@ class MainIndex:
             A tuple (path to the actual file or None if not found, True if this is inside the user plugins path)
         """
         dlldb = self.installed_dlls()
+        assert isinstance(dlldb, dict)
         if binary in dlldb:
             path, userinstalled = dlldb[binary]
             return path, userinstalled
@@ -1995,7 +2049,7 @@ class MainIndex:
         manifests = list(path.glob("*.json"))
         return manifests
 
-    def _is_plugin_recognized_by_csound(self, plugin: Plugin, method='api') -> bool:
+    def _is_plugin_recognized_by_csound(self, plugin: Plugin) -> bool:
         """
         Check if a given plugin is installed
 
@@ -2006,7 +2060,7 @@ class MainIndex:
             True if the plugin is recognized by csound
         """
         test = plugin.opcodes[0]
-        opcodes = _csound_opcodes(method=method)
+        opcodes = _csound_opcodes()
         return test in opcodes
 
     def plugin_installed_path(self, plugin: Plugin) -> Path | None:
@@ -2025,7 +2079,7 @@ class MainIndex:
         dll, user_installed = self.installed_path_for_dll(binfile)
         return dll
 
-    def is_plugin_installed(self, plugin: Plugin, check=True, method='api') -> bool:
+    def is_plugin_installed(self, plugin: Plugin, check=True) -> bool:
         """
         Is the given plugin installed?
 
@@ -2036,7 +2090,6 @@ class MainIndex:
             plugin: the plugin to query
             check: if True, we check if the opcodes declared in the plugin definition
                 are actually available
-            method: one of 'csound' (check via the binary), 'api' (check via the API)
 
         Returns:
             True if the plugin is installed. If check, we also check that the plugin is actually
@@ -2053,7 +2106,7 @@ class MainIndex:
         dll, user_installed = self.installed_path_for_dll(binfile)
         if dll is None:
             return False
-        return True if not check else self._is_plugin_recognized_by_csound(plugin, method=method)
+        return True if not check else self._is_plugin_recognized_by_csound(plugin)
 
     def find_manpage(self, opcode: str, markdown=True) -> Path | None:
         """
@@ -2207,12 +2260,14 @@ class MainIndex:
         """
         Returns a dict mapping opcodename to an Opcode definition
         """
-        out = self._cache.get('opcodes_by_name')
-        if out:
+        cachekey = 'opcodes_by_name'
+        out = self._cache.get(cachekey)
+        if out is not None:
+            assert isinstance(out, dict)
             return out
         out = {opcode.name: opcode
                for opcode in self.defined_opcodes()}
-        self._cache['opcodes_by_name'] = out
+        self._cache[cachekey] = out
         return out
 
     def parse_manpage(self, opcode: str) -> ManPage | None:
@@ -2232,8 +2287,11 @@ class MainIndex:
         """
         Returns a list of opcodes
         """
-        cached = self._cache.get('defined_opcodes')
-        if cached:
+        _debug(f"Defined opcodes, {self.user_plugins_path=}")
+        cachekey = 'defined_opcodes'
+        cached = self._cache.get(cachekey)
+        if cached is not None:
+            assert isinstance(cached, list)
             return cached
         opcodes = []
         for plugin in self.plugins.values():
@@ -2246,7 +2304,7 @@ class MainIndex:
                                       abstract=manpage.abstract if manpage else '?',
                                       syntaxes=manpage.syntaxes if manpage else []))
         opcodes.sort(key=lambda opc: opc.name.lower())
-        self._cache['defined_opcodes'] = opcodes
+        self._cache[cachekey] = opcodes
         return opcodes
 
     def serialize(self, outfile: str | Path = _MAININDEX_PICKLE_FILE
@@ -2289,7 +2347,7 @@ class MainIndex:
         except SchemaError as e:
             return ErrorMsg(f"The plugin definition for {plugin.name} has errors: {e}")
 
-        installpath = user_plugins_path()
+        installpath = self.user_plugins_path
         installpath.mkdir(parents=True, exist_ok=True)
         _debug("User plugins path: ", installpath.as_posix())
         _debug("Downloaded dll for plugin: ", plugin_binary_path.as_posix())
@@ -3032,11 +3090,18 @@ def cmd_man(idx: MainIndex, args) -> str:
 
 
 def cmd_resetcache(args) -> str:
-    _rm_dir(RISSET_DATAREPO_LOCALPATH)
-    _rm_dir(RISSET_CLONES_PATH)
+    if args.full:
+        _debug(f"Removing risset data repo: {RISSET_DATAREPO_LOCALPATH}")
+        _rm_dir(RISSET_DATAREPO_LOCALPATH)
+        _debug(f"Removing git clones from {RISSET_CLONES_PATH}")
+        _rm_dir(RISSET_CLONES_PATH)
     if os.path.exists(_MAININDEX_PICKLE_FILE):
+        _debug(f"Removing main index pickle file: {_MAININDEX_PICKLE_FILE}")
         os.remove(_MAININDEX_PICKLE_FILE)
+    else:
+        _debug("No index file found")
     return ''
+
 
 def update_self():
     """Upgrade risset itself"""
@@ -3049,12 +3114,12 @@ def cmd_list_installed_opcodes(plugins_index: MainIndex, args) -> str:
     Print a list of installed opcodes
 
     """
-    if args.long:
-        for opcode in plugins_index.defined_opcodes():
-            print(f"{opcode.name.ljust(20)}{opcode.plugin.ljust(12)}{_abbrev(opcode.abstract, 60)}")
-    else:
-        for opcode in plugins_index.defined_opcodes():
-            print(opcode.name)
+    for opcode in plugins_index.defined_opcodes():
+        if args.all or opcode.installed:
+            if args.long:
+                print(f"{opcode.name.ljust(20)}{opcode.plugin.ljust(12)}{_abbrev(opcode.abstract, 60)}")
+            else:
+                print(opcode.name)
     return ''
 
 
@@ -3117,8 +3182,6 @@ def cmd_info(idx: MainIndex, args) -> str:
         import time
         lastupdate = int((time.time() - picklefile.stat().st_mtime) / 686400)
 
-
-
     d = {
         'version': importlib.metadata.version("risset"),
         'index-version': idx.version,
@@ -3131,6 +3194,7 @@ def cmd_info(idx: MainIndex, args) -> str:
         'datarepo': RISSET_DATAREPO_LOCALPATH.as_posix(),
         'opcodesxml': (RISSET_ROOT / "opcodes.xml").as_posix(),
         'days-since-update': lastupdate,
+        'indexfile': _MAININDEX_PICKLE_FILE.as_posix() if os.path.exists(_MAININDEX_PICKLE_FILE) else '',
         'csound-version': ".".join(str(part) for part in _session.csound_version_tuple),
         'installed-plugins': [plugin.name for plugin in idx.plugins.values()
                               if idx.is_plugin_installed(plugin, check=False)]
@@ -3335,11 +3399,9 @@ def main():
     parser = argparse.ArgumentParser()
     flag(parser, "--debug", help="Print debug information")
     flag(parser, "--update", help="Update the plugins data before any action")
-    flag(parser, "--stoponerror", help="Stop parsing if an error is detected")
+    flag(parser, "--stop-on-error", help="Stop parsing if an error is detected")
+    parser.add_argument("--user-plugins-path", default="", help="Override the user plugins path")
     flag(parser, "--version", help="Print version and exit")
-    parser.add_argument("-c", "--csound", default=0, type=int,
-                        help="Which csound version to use (one of 0, 6, 7). "
-                             "Use 0 to detect the installed version")
 
     subparsers = parser.add_subparsers(dest='command')
 
@@ -3414,11 +3476,13 @@ def main():
 
     # list-opcodes
     listopcodes_cmd = subparsers.add_parser("listopcodes", help="List installed opcodes")
+    listopcodes_cmd.add_argument("--all", action="store_true", help="List all opcodes, even those within not installed plugins")
     listopcodes_cmd.add_argument("-l", "--long", action="store_true", help="Long format")
     listopcodes_cmd.set_defaults(func=cmd_list_installed_opcodes)
 
     # reset
-    reset_cmd = subparsers.add_parser("resetcache", help="Remove local clones of plugin's repositories")
+    reset_cmd = subparsers.add_parser("resetcache", help="Remove local cache")
+    reset_cmd.add_argument("--full", action="store_true", help="Remove the entire cache. Otherwise only the index is reset")
 
     # info
     info_cmd = subparsers.add_parser("info", help="Outputs information about risset itself in json format")
@@ -3459,7 +3523,7 @@ def main():
 
     args = parser.parse_args()
     _session.debug = args.debug
-    _session.stop_on_errors = args.stoponerror
+    _session.stop_on_errors = args.stop_on_error
 
     if args.version:
         from importlib.metadata import version
@@ -3475,18 +3539,17 @@ def main():
 
     update = args.update or args.command == 'update'
 
-    if args.csound == 0:
-        csoundversion, minor, rest = _csound_version()
-    else:
-        csoundversion = args.csound
+    csoundversion, minor, rest = _csound_version()
 
     try:
         _debug(f"Creating main index - csound major version: {csoundversion}")
-        if not update:
-            mainindex = _mainindex_retrieve() or MainIndex(update=False, majorversion=csoundversion)
+        if update or args.user_plugins_path or os.getenv("CS_USER_PLUGINDIR"):
+            # We don't use the cached index if the user gives an ad-hoc plugins path
+            if os.path.exists(_MAININDEX_PICKLE_FILE):
+                _debug("Not using cached index")
+            mainindex = MainIndex(update=update, major_version=csoundversion, plugins_path=args.user_plugins_path)
         else:
-            # this will serialize the mainindex
-            mainindex = MainIndex(update=True, majorversion=csoundversion)
+            mainindex = _mainindex_retrieve() or MainIndex(update=False, major_version=csoundversion)
     except Exception as e:
         _errormsg("Failed to create main index")
         if _session.debug:

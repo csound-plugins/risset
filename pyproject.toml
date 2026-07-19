@@ -17,10 +17,15 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 keywords = ["csound"]
 
-dependencies = ["pygments", "libcsound>=0.9.1", "mkdocs", "requests", "filetype"]
+dependencies = [
+    "libcsound>=0.14.0",
+    "pygments",
+    "mkdocs",
+    "requests",
+    "filetype"]
 
 [project.scripts]
 risset = "risset:main"
