@@ -468,7 +468,7 @@ def _errormsg(msg: str) -> None:
 
 
 def _info(*msgs: str) -> None:
-    print(*msgs)
+    print(*msgs, file=sys.stderr)
 
 
 class ErrorMsg(str):
@@ -2381,7 +2381,15 @@ class MainIndex:
         # no errors
         return None
 
-    def list_plugins_as_dict(self, installed=False) -> dict:
+    def list_plugins_as_dict(self, installed=False, all=False) -> dict:
+        """
+        List plugins as a dict
+
+        Args:
+            installed: include only installed plugins
+            all: if False, filter out any plugin which does not have a binary
+                for the current platform/csound version
+        """
         d = {}
         for plugin in self.plugins.values():
             assert isinstance(plugin, Plugin)
@@ -2389,6 +2397,8 @@ class MainIndex:
             binary = plugin.find_binary()
             plugininstalled = info is not None
             if installed and not plugininstalled:
+                continue
+            if not all and binary is None:
                 continue
             plugdict: dict[str, Any] = {'version': plugin.version}
             if info:
@@ -2427,10 +2437,20 @@ class MainIndex:
         return plugins
 
     def list_plugins(self, installed=False, nameonly=False, leftcolwidth=20,
-                     oneline=False, upgradeable=False, header=True
+                     oneline=False, upgradeable=False, header=True, available=True
                      ) -> bool:
         """
-        Print a list of the installed plugins
+        Print a list of the available plugins
+
+        Args:
+            installed: only list plugins which are installed
+            nameonly: display only the name of the plugin
+            leftcolwidth: the width of the left column (plugin name and version)
+            oneline: use one line per plugin
+            upgradeable: display only plugins which need to be upgraded
+            header: print a header
+            available: if True, list only plugins with a binary available
+                for the current platform/csound version
         """
         width, height = _termsize()
         descr_max_width = width - 36
@@ -2457,6 +2477,10 @@ class MainIndex:
                                 plugin.versiontuple <= info.versiontuple):
                 continue
 
+            bindef = plugin.find_binary()
+            if available and bindef is None:
+                continue
+
             if nameonly:
                 print(plugin.name)
                 continue
@@ -2478,7 +2502,6 @@ class MainIndex:
                 status = ""
             leftcol = f"{plugin.name} /{plugin.version}"
             descr = plugin.short_description
-            bindef = plugin.find_binary()
             if not bindef:
                 available = ', '.join(plugin.available_binaries())
                 extra_lines.append(f"-- No binaries for {platform}/{csoundversion}")
@@ -2891,10 +2914,14 @@ def _docs_generate_index(index: MainIndex, outfile: Path) -> None:
 
 def cmd_list(mainindex: MainIndex, args) -> str:
     """
-    Lists all plugins available for download
+    Lists plugins available for download
+
+    By default only plugins with a binary available for the current
+    platform/csound version are listed. Use the --all flag to list all
+    plugins, even those without a matching binary.
     """
     if args.json:
-        d = mainindex.list_plugins_as_dict(installed=args.installed)
+        d = mainindex.list_plugins_as_dict(installed=args.installed, all=args.all)
         if args.outfile:
             with open(args.outfile, "w") as f:
                 json.dump(d, f, indent=2)
@@ -2905,8 +2932,8 @@ def cmd_list(mainindex: MainIndex, args) -> str:
         header = True
         if args.oneline or args.nameonly or args.noheader:
             header = False
-        ok = mainindex.list_plugins(installed=args.installed, nameonly=args.nameonly, oneline=args.oneline,
-                                    upgradeable=args.upgradeable, header=header)
+        ok = (mainindex.list_plugins(installed=args.installed, nameonly=args.nameonly, oneline=args.oneline,
+                                     upgradeable=args.upgradeable, header=header, available=not args.all))
         return '' if ok else 'Error while listing plugins'
 
 
@@ -3374,6 +3401,8 @@ def main():
     list_cmd = subparsers.add_parser('list', help="List packages")
 
     flag(list_cmd, "--json", help="Outputs list as json")
+    flag(list_cmd, "--all", help="List all plugins, even those without a binary "
+                                 "for the current platform/csound version")
     flag(list_cmd, "--nameonly", help="Output just the name of each plugin")
     flag(list_cmd, "--installed", help="List only installed plugins")
     flag(list_cmd, "--upgradeable", help="List only installed packages which can be upgraded")
