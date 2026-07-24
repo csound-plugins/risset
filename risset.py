@@ -1750,7 +1750,7 @@ def _system_plugins_path(majorversion: int) -> Path | None:
 
     out = _find_system_plugins_path(possible_paths, majorversion=majorversion)
     if not out:
-        _info(f"System plugins path not found. Searched paths: {possible_paths}")
+        _debug(f"System plugins path not found. Searched paths: {[_.as_posix() for _ in possible_paths]}")
         _debug(f"Csound version: {_session.csound_version}, version tuple: {_session.csound_version_tuple}")
         return None
     assert out.exists() and out.is_dir() and out.is_absolute()
