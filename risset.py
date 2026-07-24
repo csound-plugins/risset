@@ -209,8 +209,6 @@ def _platform_architecture() -> str:
 def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
     """Returns a tuple (major, minor) using the csound api
 
-    This version can differ from the version of the installed csound binary
-
     Args:
         libcsoundpath: the path to libcsoun64 if using an ad-hoc installation
 
@@ -224,6 +222,7 @@ def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
         import ctypes
         try:
             libcsound = ctypes.CDLL(libcsoundpath)
+            libcsound.csoundGetVersion.restype = ctypes.c_int32
             versionid = libcsound.CsoundGetVersion()
         except OSError as e:
             raise IOError(f"Could not load libcsound from '{libcsoundpath}': {e}")
@@ -233,32 +232,6 @@ def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
     major = versionid // 1000
     minor = (versionid - major*1000) // 10
     return major, minor
-
-
-# def _csound_version(csoundexe='csound') -> tuple[int, int, str]:
-#     """
-#     Query the csound version via the executable
-#
-#     Args:
-#         csoundexe: the csound executable
-#
-#     Returns:
-#         a tuple (major: int, minor: int, rest: str)
-#     """
-#     csound_bin = _get_csound_binary(csoundexe)
-#     if not csound_bin:
-#         raise OSError("csound binary not found")
-#     proc = subprocess.Popen([csound_bin, "--version"], stderr=subprocess.PIPE)
-#     proc.wait()
-#     assert proc.stderr is not None
-#     out = proc.stderr.read().decode('ascii')
-#     for line in out.splitlines():
-#         if match := re.search(r'--Csound\s+version\s+(\d+)\.(\d+)(.*)', line):
-#             major = int(match.group(1))
-#             minor = int(match.group(2))
-#             rest = match.group(3)
-#             return major, minor, rest
-#     raise ValueError("Could not find a version number in the output")
 
 
 class _Session:
@@ -3531,7 +3504,7 @@ def main():
 
     update = args.update or args.command == 'update'
 
-    csoundversion, minor, rest = _csound_version()
+    csoundversion, minor = _csoundlib_version()
 
     try:
         _debug(f"Creating main index - csound major version: {csoundversion}")
