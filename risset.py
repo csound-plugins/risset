@@ -824,12 +824,12 @@ class Plugin:
         possible_binaries = [b for b in self.binaries
                              if b.platform == platformid and b.matches_versionid(csound_version)]
         if not possible_binaries:
-            _debug(f"Plugin '{self.name}' does not seem to have a binary for platform '{platformid}'. "
-                   f"Found binaries for platforms: {[b.platform for b in self.binaries]}")
+            _debug(f"Plugin '{self.name}' does not have a binary for platform '{platformid}'. "
+                   f"Found binaries for {[b.platform for b in self.binaries]}")
             return None
         else:
             if len(possible_binaries) > 1:
-                _debug(f"Found multiple binaries for {self.name}. Will select the first one")
+                _debug(f"Found multiple binaries for {self.name}: {possible_binaries}. Will select the first one")
             return possible_binaries[0]
 
     def available_binaries(self) -> list[str]:
@@ -2115,8 +2115,6 @@ class MainIndex:
         binfile = binary.binary_filename()
         dll, user_installed = self.installed_path_for_dll(binfile)
         if not dll:
-            # plugin is not installed
-            _debug(f"plugin {plugin.name} is not installed yet")
             return None
 
         installed_version = UNKNOWN_VERSION
