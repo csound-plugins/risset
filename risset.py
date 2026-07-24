@@ -235,30 +235,30 @@ def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
     return major, minor
 
 
-def _csound_version(csoundexe='csound') -> tuple[int, int, str]:
-    """
-    Query the csound version via the executable
-
-    Args:
-        csoundexe: the csound executable
-
-    Returns:
-        a tuple (major: int, minor: int, rest: str)
-    """
-    csound_bin = _get_csound_binary(csoundexe)
-    if not csound_bin:
-        raise OSError("csound binary not found")
-    proc = subprocess.Popen([csound_bin, "--version"], stderr=subprocess.PIPE)
-    proc.wait()
-    assert proc.stderr is not None
-    out = proc.stderr.read().decode('ascii')
-    for line in out.splitlines():
-        if match := re.search(r'--Csound\s+version\s+(\d+)\.(\d+)(.*)', line):
-            major = int(match.group(1))
-            minor = int(match.group(2))
-            rest = match.group(3)
-            return major, minor, rest
-    raise ValueError("Could not find a version number in the output")
+# def _csound_version(csoundexe='csound') -> tuple[int, int, str]:
+#     """
+#     Query the csound version via the executable
+#
+#     Args:
+#         csoundexe: the csound executable
+#
+#     Returns:
+#         a tuple (major: int, minor: int, rest: str)
+#     """
+#     csound_bin = _get_csound_binary(csoundexe)
+#     if not csound_bin:
+#         raise OSError("csound binary not found")
+#     proc = subprocess.Popen([csound_bin, "--version"], stderr=subprocess.PIPE)
+#     proc.wait()
+#     assert proc.stderr is not None
+#     out = proc.stderr.read().decode('ascii')
+#     for line in out.splitlines():
+#         if match := re.search(r'--Csound\s+version\s+(\d+)\.(\d+)(.*)', line):
+#             major = int(match.group(1))
+#             minor = int(match.group(2))
+#             rest = match.group(3)
+#             return major, minor, rest
+#     raise ValueError("Could not find a version number in the output")
 
 
 class _Session:
@@ -1050,8 +1050,13 @@ def _csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='') -> se
     """
     oldenv = os.environ.copy()
     if libcsound_path:
+        if not os.path.exists(libcsound_path):
+            raise IOError(f"The given libcsound path does not exist: '{libcsound_path}'")
         os.environ['LIBCSOUNDPATH'] = libcsound_path
+
     if user_plugins_dir:
+        if not os.path.exists(user_plugins_dir):
+            raise IOError(f"The given user plugins path does not exist: '{user_plugins_dir}'")
         os.environ['CS_USER_PLUGINDIR'] = user_plugins_dir
 
     import libcsound
@@ -1353,23 +1358,14 @@ def _parse_binarydef(binarydef: dict, substitutions: dict[str, str]) -> Binary:
         to indicate the location of the binary within the .zip file or within the git repository
     """
     assert isinstance(binarydef, dict), f"dict: {binarydef}"
-    platform = binarydef.get('platform')
-    if not platform:
-        raise ParseError(f"Plugin binary should have a platform key. Binary definition: {binarydef}")
-
+    platform = _enforce_key(binarydef, 'platform', str)
     normalized_platform = _normalize_platform(platform)
     if not normalized_platform:
         raise ParseError(f"Platform '{platform}' not supported. "
                          f"Possible platforms are {_supported_platforms}. ")
 
-    url = binarydef.get('url')
-    if not url:
-        raise ParseError(f"Plugin definition for {platform} should have an url")
-
-    csound_version = binarydef.get('csound_version')
-    if not csound_version:
-        _errormsg(f'No csound version found for binary {binarydef}')
-        csound_version = '>=6.18<7.0'
+    url = _enforce_key(binarydef, 'url', str, )
+    csound_version = _enforce_key(binarydef, 'csound_version', str)
 
     url = _expand_substitutions(url, substitutions)
     build_platform = binarydef.get('build_platform', 'unknown')
@@ -1388,10 +1384,12 @@ def _parse_asset(assetdef: dict, defaultsource: str) -> Asset:
     return Asset(source=source, patterns=paths, platform=assetdef.get('platform', 'all'), name=assetdef.get('name', ''))
 
 
-def _enforce_key(d: dict, key: str):
+def _enforce_key[T](d: dict, key: str, expected_type: type[T]) -> T:
     value = d.get(key)
     if value is None:
-        raise SchemaError(f"Plugin has no {key} key")
+        raise SchemaError(f"dict has no {key} key")
+    if not isinstance(value, expected_type):
+        raise SchemaError(f"value should be of type {expected_type.__name__}, got {type(value).__name__}")
     return value
 
 
@@ -1403,20 +1401,14 @@ def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
         subpath: the path of the manifest's folder, relative to the root of the repository
     """
     clonepath = _git_local_path(pluginurl)
-    version = _normalize_version(_enforce_key(d, 'version'))
-    pluginname = _enforce_key(d, 'name')
-    opcodes = _enforce_key(d, 'opcodes')
+    version = _normalize_version(_enforce_key(d, 'version', str))
+    pluginname = _enforce_key(d, 'name', str)
+    opcodes = _enforce_key(d, 'opcodes', list)
     opcodes.sort()
     substitutions = {key: str(value) for key, value in d.items() if isinstance(value, (int, float, str))}
 
     binaries: list[Binary] = []
-    binarydefs = _enforce_key(d, 'binaries')
-    if not isinstance(binarydefs, list):
-        import pprint
-        s = pprint.pformat(binarydefs)
-        _errormsg("Expected a list of binary definitions, got: ")
-        _errormsg(s)
-        raise SchemaError(f"Parsing 'binaries', expected a list of binary definitions, got a {type(binarydefs)}")
+    binarydefs = _enforce_key(d, 'binaries', list)
     for binarydef in binarydefs:
         if not isinstance(binarydef, dict):
 
@@ -1440,22 +1432,22 @@ def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
                   f"({manifest_local_folder})")
 
     assets: list[Asset] = []
-    assetdefs = d.get('assets')
-    if assetdefs:
+    if assetdefs := d.get('assets'):
         if not isinstance(assetdefs, list):
             raise SchemaError(f"assets should hold a list of asset definitions, got {assetdefs}")
+        posix_folder = manifest_local_folder.as_posix()
         for assetdef in assetdefs:
             try:
-                assets.append(_parse_asset(assetdef, defaultsource=manifest_local_folder.as_posix()))
+                assets.append(_parse_asset(assetdef, defaultsource=posix_folder))
             except ParseError as e:
                 _errormsg(str(e))
 
     return Plugin(
-        name=_enforce_key(d, 'name'),
+        name=_enforce_key(d, 'name', str),
         version=version,
-        short_description=_enforce_key(d, 'short_description'),
-        author=_enforce_key(d, 'author'),
-        email=_enforce_key(d, 'email'),
+        short_description=_enforce_key(d, 'short_description', str),
+        author=_enforce_key(d, 'author', str),
+        email=_enforce_key(d, 'email', str),
         opcodes=opcodes,
         binaries=binaries,
         doc_folder=d.get('doc', ''),
