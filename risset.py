@@ -2327,6 +2327,7 @@ class MainIndex:
                             f"the expected path: {installed_path.as_posix()}")
 
         _session.cache.clear()
+        self._cache.clear()
 
         # installation succeeded, check that it works
         if not self.is_plugin_installed(plugin, check=check):
