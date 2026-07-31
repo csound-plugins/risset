@@ -1970,6 +1970,18 @@ class MainIndex:
         self._cache[cachekey] = db
         return db
 
+    def _invalidate_installed(self) -> None:
+        """
+        Invalidate cached data derived from the set of installed plugins.
+
+        Called after installing or uninstalling a plugin. Other session
+        caches (csound/git binary, plugins paths, etc.) are not affected
+        """
+        for key in ('installed_dlls', 'defined_opcodes', 'opcodes_by_name'):
+            self._cache.pop(key, None)
+        for key in [k for k in _session.cache if k.startswith('system_installed_dlls_')]:
+            _session.cache.pop(key)
+
     def installed_path_for_dll(self, binary: str) -> tuple[Path | None, bool]:
         """
         Get the installed path for a given plugin binary
@@ -2326,7 +2338,7 @@ class MainIndex:
             return ErrorMsg(f"Installation of plugin {plugin.name} failed, binary was not found in "
                             f"the expected path: {installed_path.as_posix()}")
 
-        _session.cache.clear()
+        self._invalidate_installed()
 
         # installation succeeded, check that it works
         if not self.is_plugin_installed(plugin, check=check):
@@ -2595,6 +2607,7 @@ class MainIndex:
                                f" be removed manually. Path: {info.dllpath.as_posix()}")
         os.remove(info.dllpath.as_posix())
         assert not info.dllpath.exists(), f"Attempted to remove {info.dllpath.as_posix()}, but failed"
+        self._invalidate_installed()
         manifestpath = info.installed_manifest_path
         assetsfolder = RISSET_ASSETS_PATH / plugin.name
         if manifestpath and manifestpath.exists():
