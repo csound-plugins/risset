@@ -78,7 +78,7 @@ RISSET_GENERATED_DOCS = RISSET_ROOT / "man"
 RISSET_CLONES_PATH = RISSET_ROOT / "clones"
 RISSET_ASSETS_PATH = RISSET_ROOT / "assets"
 RISSET_OPCODESXML = RISSET_ROOT / "opcodes.xml"
-_MAININDEX_PICKLE_FILE = RISSET_ROOT / "mainindex.pickle"
+_MANPAGES_CACHE_DIR = RISSET_ROOT / "manpage-cache"
 MACOS_ENTITLEMENTS_PATH = RISSET_ASSETS_PATH / 'csoundplugins.entitlements'
 
 UNKNOWN_VERSION = "Unknown"
@@ -392,29 +392,6 @@ def _abbrev(s: str, maxlen: int) -> str:
         return s
     rightlen = min(8, lens // 5)
     return f"{s[:lens - rightlen - 1]}…{s[-rightlen:]}"
-
-
-def _mainindex_retrieve(days_threshold=10) -> MainIndex | None:
-    """
-    Try to retrieve a previously pickled mainindex
-    """
-    picklefile = _MAININDEX_PICKLE_FILE
-    if not picklefile.exists():
-        return None
-    import pickle
-    import time
-    days_since_last_modification = (picklefile.stat().st_mtime - time.time()) / 86400
-    if days_since_last_modification > days_threshold:
-        return None
-    _debug("Recreating main index from pickled version")
-    f = open(picklefile, "rb")
-    try:
-        return pickle.load(f)
-    except Exception as e:
-        _errormsg(f"Could not retrieve mainindex from serialized file: {e}")
-        _debug(f"Serialized file ({picklefile}) removed")
-        os.remove(picklefile)
-        return None
 
 
 def _is_git_repo(path: str | Path) -> bool:
@@ -950,6 +927,7 @@ def _zip_extract_folder(zipfile: Path,
     if destfolder.exists():
         _debug(f"_zip_extract_folder: Destination folder {destfolder} already exists, removing")
         _rm_dir(destfolder)
+    assert destroot is not None
     shutil.move(root / folder, destroot)
     assert destfolder.exists() and destfolder.is_dir()
     if cleanup:
@@ -1016,7 +994,7 @@ def _csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='') -> se
     Args:
         opcode_dir: overrides the path to search for plugins distributed with csound
         libcsound_path: path to a custom libcsound64 dll
-        user_plugins_dur: path to a custom path for user installed plugins
+        user_plugins_dir: path to a custom path for user installed plugins
 
     Returns:
         a set of strings with the names of all installed opcodes
@@ -1054,29 +1032,30 @@ def _get_path_separator() -> str:
     return ":"
 
 
-def _get_shell() -> str | None:
-    """
-    Returns one of "bash", "zsh", "fish"
+# def _get_shell() -> str | None:
+#     """
+#     Returns one of "bash", "zsh", "fish"
+#
+#     If not able to get the given information, returns None
+#     In particular, in windows it returns None
+#     """
+#     if sys.platform == "win32":
+#         return
+#     shellenv = os.getenv("SHELL")
+#     if not shellenv:
+#         return None
+#     shell = os.path.split(shellenv)[1].strip()
+#     if shell in ("bash", "zsh", "fish"):
+#         return shell
+#     return None
 
-    If not able to get the given information, returns None
-    In particular, in windows it returns None
-    """
-    if sys.platform == "win32":
-        return
-    shellenv = os.getenv("SHELL")
-    if not shellenv:
-        return None
-    shell = os.path.split(shellenv)[1].strip()
-    if shell in ("bash", "zsh", "fish"):
-        return shell
-    return None
 
-
-def _get_csound_binary(binary) -> str | None:
-    if (out := _session.cache.get('csound-bin', _UNSET)) is _UNSET:
-        path = shutil.which(binary)
-        _session.cache['csound-bin'] = out = path if path else None
-    return out
+# def _get_csound_binary(binary) -> str | None:
+#     if (out := _session.cache.get('csound-bin', _UNSET)) is _UNSET:
+#         path = shutil.which(binary)
+#         _session.cache['csound-bin'] = out = path if path else None
+#     assert out is None or isinstance(out, str)
+#     return out
 
 
 def _get_git_binary() -> str:
@@ -1831,11 +1810,10 @@ class MainIndex:
         self._parse_index(updateindex=updateindex, updateplugins=update, stop_on_errors=False)
         assert not self._cache
         _debug(f"User plugins path: {self.user_plugins_path}")
-        if update or not os.path.exists(_MAININDEX_PICKLE_FILE):
-            if self.is_custom():
-                _debug(f"Current environment is not the default, not serializing: '{self.user_plugins_path=}', {self.system_plugins_path=}")
-            else:
-                self.serialize()
+        if update:
+            # the plugin sources were git-updated, so discard any
+            # cached manpage parses from disk
+            self.clear_manpage_cache()
 
     def is_custom(self) -> bool:
         """
@@ -1907,7 +1885,7 @@ class MainIndex:
         Update all sources and reread the index
         """
         self._parse_index(updateindex=True, updateplugins=True, stop_on_errors=_session.stop_on_errors)
-        self.serialize()
+        self.clear_manpage_cache()
 
     def build_documentation(self,
                             dest: Path | None = None,
@@ -2085,6 +2063,22 @@ class MainIndex:
             return False
         return True if not check else self._is_plugin_recognized_by_csound(plugin)
 
+    def _find_manpage_source(self, opcode: str) -> tuple[Plugin, Path] | None:
+        """
+        Find the plugin that defines the given opcode and the path to its
+        markdown manpage
+
+        Returns:
+            a tuple (plugin, path to the manpage file), or None if the opcode
+            is not known or has no manpage
+        """
+        for plugin in self.plugins.values():
+            if opcode in plugin.opcodes:
+                path = plugin.manpage(opcode)
+                if path is not None:
+                    return plugin, path
+        return None
+
     def find_manpage(self, opcode: str, markdown=True) -> Path | None:
         """
         Find the man page for the given opcode
@@ -2108,11 +2102,11 @@ class MainIndex:
                 return None
             return htmlpage
         else:
-            for plugin in self.plugins.values():
-                if opcode in plugin.opcodes:
-                    return plugin.manpage(opcode)
-            _errormsg(f"Opcode {opcode} not found")
-            return None
+            source = self._find_manpage_source(opcode)
+            if source is None:
+                _errormsg(f"Opcode {opcode} not found")
+                return None
+            return source[1]
 
     def installed_plugin_info(self, plugin: Plugin) -> InstalledPluginInfo | None:
         """
@@ -2245,9 +2239,54 @@ class MainIndex:
         self._cache[cachekey] = out
         return out
 
+    def _manpage_cachefile(self, plugin: Plugin, opcode: str) -> Path:
+        """
+        The path to the cached parse for the manpage of the given opcode,
+        as defined by the given plugin
+        """
+        name = f"{plugin.name.lower()}__{opcode.lower()}.pickle"
+        return _MANPAGES_CACHE_DIR / name
+
+    def _cached_manpage(self, plugin: Plugin, opcode: str, manpage: Path) -> ManPage | None:
+        """
+        Parse the given manpage, using a per-opcode cache on disk
+
+        The cache is validated against the source file's modification time, so
+        it is automatically invalidated when the manpage changes (e.g. after
+        updating the plugin repositories). Only the parsed values are stored,
+        not the whole index, so the installed state of the plugins is always
+        recomputed from scratch.
+        """
+        import pickle
+        cachefile = self._manpage_cachefile(plugin, opcode)
+        try:
+            src_mtime = manpage.stat().st_mtime
+        except OSError:
+            return _manpage_parse(manpage, opcode)
+        if cachefile.exists():
+            try:
+                with open(cachefile, "rb") as f:
+                    cached_mtime, cached = pickle.load(f)
+                if cached_mtime == src_mtime and isinstance(cached, ManPage):
+                    return cached
+            except Exception as e:
+                _debug(f"Discarding invalid manpage cache for {opcode}: {e}")
+        parsed = _manpage_parse(manpage, opcode)
+        if parsed is not None:
+            cachefile.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(cachefile, "wb") as f:
+                    pickle.dump((src_mtime, parsed), f)
+            except Exception as e:
+                _debug(f"Could not cache manpage for {opcode}: {e}")
+        return parsed
+
     def parse_manpage(self, opcode: str) -> ManPage | None:
         """
         Parse the manual page for a given opcode
+
+        The parsed manpage is cached on disk (one file per opcode) so that
+        parsing is only done once per manpage version.
 
         Args:
             opcode: opcode name
@@ -2255,8 +2294,11 @@ class MainIndex:
         Returns:
             a ManPage, if a manpage was found for the opcode, or None
         """
-        manpage = self.find_manpage(opcode, markdown=True)
-        return _manpage_parse(manpage, opcode) if manpage else None
+        source = self._find_manpage_source(opcode)
+        if source is None:
+            return None
+        plugin, manpage = source
+        return self._cached_manpage(plugin, opcode, manpage)
 
     def defined_opcodes(self) -> list[Opcode]:
         """
@@ -2282,13 +2324,17 @@ class MainIndex:
         self._cache[cachekey] = opcodes
         return opcodes
 
-    def serialize(self, outfile: str | Path = _MAININDEX_PICKLE_FILE
-                  ) -> None:
-        import pickle
-        # Populate cache
-        _ = self.opcodes_by_name()
-        _ = self.installed_dlls()
-        pickle.dump(self, open(outfile, 'wb'))
+    def clear_manpage_cache(self) -> None:
+        """
+        Remove the cached parsed manpages from disk
+
+        The cache is normally invalidated automatically when the source
+        manpage changes, but this method can be used to force a rebuild
+        (e.g. after updating the plugin sources)
+        """
+        if _MANPAGES_CACHE_DIR.exists():
+            _debug(f"Clearing manpage cache: {_MANPAGES_CACHE_DIR}")
+            _rm_dir(_MANPAGES_CACHE_DIR)
 
     def install_plugin(self, plugin: Plugin, check=False) -> ErrorMsg | None:
         """
@@ -2549,6 +2595,8 @@ class MainIndex:
                         else 'No manifest (installed manually)')
             print(f"Installed     : {info.versionstr} (path: {info.dllpath.as_posix()}) \n"
                   f"Manifest      : {manifest}")
+        else:
+            print("Installed     : No")
         print(f"Abstract      : {plugdef.short_description}")
         if plugdef.long_description.strip():
             print("Description:")
@@ -3098,11 +3146,16 @@ def cmd_resetcache(args) -> str:
         _rm_dir(RISSET_DATAREPO_LOCALPATH)
         _debug(f"Removing git clones from {RISSET_CLONES_PATH}")
         _rm_dir(RISSET_CLONES_PATH)
-    if os.path.exists(_MAININDEX_PICKLE_FILE):
-        _debug(f"Removing main index pickle file: {_MAININDEX_PICKLE_FILE}")
-        os.remove(_MAININDEX_PICKLE_FILE)
+    if _MANPAGES_CACHE_DIR.exists():
+        _debug(f"Removing manpage cache: {_MANPAGES_CACHE_DIR}")
+        _rm_dir(_MANPAGES_CACHE_DIR)
     else:
-        _debug("No index file found")
+        _debug("No cache found")
+    # remove the legacy whole-index pickle, if any (from older risset versions)
+    legacy_pickle = RISSET_ROOT / "mainindex.pickle"
+    if legacy_pickle.exists():
+        _debug(f"Removing legacy main index pickle: {legacy_pickle}")
+        os.remove(legacy_pickle)
     return ''
 
 
@@ -3178,12 +3231,8 @@ def cmd_makedocs(idx: MainIndex, args) -> str:
 
 
 def cmd_info(idx: MainIndex, args) -> str:
-    picklefile = _MAININDEX_PICKLE_FILE
-    if not picklefile.exists():
-        lastupdate = 99999999
-    else:
-        import time
-        lastupdate = int((time.time() - picklefile.stat().st_mtime) / 686400)
+    import time
+    lastupdate = int((time.time() - idx.indexfile.stat().st_mtime) / 86400)
 
     d = {
         'version': importlib.metadata.version("risset"),
@@ -3197,7 +3246,8 @@ def cmd_info(idx: MainIndex, args) -> str:
         'datarepo': RISSET_DATAREPO_LOCALPATH.as_posix(),
         'opcodesxml': (RISSET_ROOT / "opcodes.xml").as_posix(),
         'days-since-update': lastupdate,
-        'indexfile': _MAININDEX_PICKLE_FILE.as_posix() if os.path.exists(_MAININDEX_PICKLE_FILE) else '',
+        'indexfile': idx.indexfile.as_posix(),
+        'manpage-cache': _MANPAGES_CACHE_DIR.as_posix() if _MANPAGES_CACHE_DIR.exists() else '',
         'csound-version': ".".join(str(part) for part in _session.csound_version_tuple),
         'installed-plugins': [plugin.name for plugin in idx.plugins.values()
                               if idx.is_plugin_installed(plugin, check=False)]
@@ -3548,13 +3598,7 @@ def main():
 
     try:
         _debug(f"Creating main index - csound major version: {csoundversion}")
-        if update or args.user_plugins_path or os.getenv("CS_USER_PLUGINDIR"):
-            # We don't use the cached index if the user gives an ad-hoc plugins path
-            if os.path.exists(_MAININDEX_PICKLE_FILE):
-                _debug("Not using cached index")
-            mainindex = MainIndex(update=update, major_version=csoundversion, plugins_path=args.user_plugins_path)
-        else:
-            mainindex = _mainindex_retrieve() or MainIndex(update=False, major_version=csoundversion)
+        mainindex = MainIndex(update=update, major_version=csoundversion, plugins_path=args.user_plugins_path)
     except Exception as e:
         _errormsg("Failed to create main index")
         if _session.debug:
