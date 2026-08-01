@@ -270,6 +270,9 @@ class _Session:
         self.debug = False
         """True if in debug mode"""
 
+        self.no_color = False
+        """True if color output is disabled"""
+
         self.csound_version_tuple = (major, minor)
         """Csound version as (major, minor)"""
 
@@ -446,6 +449,23 @@ def _errormsg(msg: str) -> None:
 
 def _info(*msgs: str) -> None:
     print(*msgs, file=sys.stderr)
+
+
+def _colorize(msg: str, style: str = "") -> str:
+    """
+    Format `msg` with an ANSI style, if stdout is a terminal
+
+    `style` is an attribute string as used by `pygments.console.ansiformat`,
+    e.g. 'bold', '*red', '_blue', 'green'
+
+    The message is returned unmodified if stdout is not a terminal, if
+    the NO_COLOR environment variable is set or if the --no-color
+    command line flag was given
+    """
+    if not style or not sys.stdout.isatty() or 'NO_COLOR' in os.environ or _session.no_color:
+        return msg
+    from pygments.console import ansiformat
+    return ansiformat(style, msg)
 
 
 class ErrorMsg(str):
@@ -2544,14 +2564,14 @@ class MainIndex:
             extra_lines = []
             if info:
                 if info.versionstr == UNKNOWN_VERSION:
-                    data.append("manual")
+                    data.append(_colorize("manual", 'yellow'))
                 else:
                     if oneline:
-                        data.append(info.versionstr)
+                        data.append(_colorize(info.versionstr, 'green'))
                     else:
-                        data.append(f"installed: {info.versionstr}")
+                        data.append(_colorize(f"installed: {info.versionstr}", 'green'))
                 if not info.installed_in_system_folder and not oneline:
-                    extra_lines.append(f"Path: {info.dllpath}")
+                    extra_lines.append(_colorize(f"Path: {info.dllpath}", 'faint'))
             if data:
                 status = "[" + ", ".join(data) + "]"
             else:
@@ -2560,12 +2580,13 @@ class MainIndex:
             descr = plugin.short_description
             if not bindef:
                 available = ', '.join(plugin.available_binaries())
-                extra_lines.append(f"-- No binaries for {platform}/{csoundversion}")
-                extra_lines.append(f"   Available binaries: {available}")
+                extra_lines.append(_colorize(f"-- No binaries for {platform}/{csoundversion}", 'yellow'))
+                extra_lines.append(_colorize(f"   Available binaries: {available}", 'yellow'))
             if oneline and len(descr) > descr_max_width:
                 descr = descr[:descr_max_width] + "…"
-            symbol = "*" if plugininstalled else "-"
-            print(f"{symbol} {leftcol.ljust(leftcolwidth)} | {descr} {status}")
+            symbol = _colorize("*", 'green') if plugininstalled else _colorize("-", 'faint')
+            namecol = _colorize(leftcol.ljust(leftcolwidth), 'cyan' if plugininstalled else '')
+            print(f"{symbol} {namecol} | {descr} {status}")
             if extra_lines:
                 for line in extra_lines:
                     print(" " * leftcolwidth + "   |   ", line)
@@ -2584,32 +2605,33 @@ class MainIndex:
                       f"Known plugins: {', '.join(self.plugins.keys())}")
             return False
         info = self.installed_plugin_info(plugdef)
+        c = _colorize
         print("\n"
-              f"Plugin        : {plugdef.name}    \n"
-              f"Author        : {plugdef.author} ({plugdef.email}) \n"
-              f"URL           : {plugdef.url}     \n"
-              f"Version       : {plugdef.version} \n"
+              f"{c('Plugin        :', 'bold')} {c(plugdef.name, '*cyan*')}    \n"
+              f"{c('Author        :', 'bold')} {plugdef.author} ({plugdef.email}) \n"
+              f"{c('URL           :', 'bold')} {c(plugdef.url, '_blue_')}     \n"
+              f"{c('Version       :', 'bold')} {c(plugdef.version, 'yellow')} \n"
               )
         if info:
             manifest = (info.installed_manifest_path.as_posix() if info.installed_manifest_path
                         else 'No manifest (installed manually)')
-            print(f"Installed     : {info.versionstr} (path: {info.dllpath.as_posix()}) \n"
-                  f"Manifest      : {manifest}")
+            print(f"{c('Installed     :', 'bold')} {c(info.versionstr, 'green')} (path: {info.dllpath.as_posix()}) \n"
+                  f"{c('Manifest      :', 'bold')} {manifest}")
         else:
-            print("Installed     : No")
-        print(f"Abstract      : {plugdef.short_description}")
+            print(f"{c('Installed     :', 'bold')} {c('No', 'red')}")
+        print(f"{c('Abstract      :', 'bold')} {plugdef.short_description}")
         if plugdef.long_description.strip():
-            print("Description:")
+            print(c('Description:', 'bold'))
             for line in textwrap.wrap(plugdef.long_description, 72):
                 print(" " * 3, line)
             # print(textwrap.wrapindent("     ", plugdef.long_description))
-        print("Opcodes:")
-        opcstrs = textwrap.wrap(", ".join(plugdef.opcodes), 72)
+        print(c('Opcodes:', 'bold'))
+        opcstrs = textwrap.wrap(", ".join(c(opcode, 'green') for opcode in plugdef.opcodes), 72)
         for s in opcstrs:
             print("   ", s)
 
         if plugdef.binaries:
-            print("Binaries:")
+            print(c('Binaries:', 'bold'))
             for binary in plugdef.binaries:
                 if not binary_url:
                     print(f"    * {binary.platform}/csound{binary.csound_version}")
@@ -2620,7 +2642,7 @@ class MainIndex:
                     print(f"    * {binary.platform}/csound{binary.csound_version}, {url}")
 
         if plugdef.assets:
-            print("Assets:")
+            print(c('Assets:', 'bold'))
             for asset in plugdef.assets:
                 print(f"    * identifier: {_abbrev(asset.identifier(), 70)}\n"
                       f"      source: {asset.source}\n"
@@ -3451,6 +3473,7 @@ def main():
     # Main parser
     parser = argparse.ArgumentParser()
     flag(parser, "--debug", help="Print debug information")
+    flag(parser, "--no-color", help="Disable colored output")
     flag(parser, "--update", help="Update the plugins data before any action")
     flag(parser, "--stop-on-error", help="Stop parsing if an error is detected")
     parser.add_argument("--user-plugins-path", default="", help="Override the user plugins path")
@@ -3578,6 +3601,7 @@ def main():
 
     args = parser.parse_args()
     _session.debug = args.debug
+    _session.no_color = args.no_color
     _session.stop_on_errors = args.stop_on_error
 
     if args.version:
