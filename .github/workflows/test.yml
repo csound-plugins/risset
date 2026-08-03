@@ -225,6 +225,39 @@ jobs:
           risset info --full
           risset makedocs
 
+      - name: macos - test codesign and quarantine removal
+        shell: bash
+        run: |
+          set -ex
+          # simulate a browser download by attaching the quarantine xattr to
+          # every installed plugin (downloads via curl/requests do not set it)
+          PLUGINDIR=$(ls -d $HOME/Library/csound/*/plugins64 | head -1)
+          dylibs=("$PLUGINDIR"/*.dylib)
+          if [ ${#dylibs[@]} -eq 0 ]; then
+            echo "ERROR: no installed plugin dylibs found in $PLUGINDIR"
+            exit 1
+          fi
+          for dylib in "${dylibs[@]}"; do
+            xattr -w com.apple.quarantine "0083;5f2f8f9c;Chrome;99;$(uuidgen)" "$dylib"
+            xattr -p com.apple.quarantine "$dylib"
+          done
+          risset dev codesign
+          for dylib in "${dylibs[@]}"; do
+            # the quarantine attribute must have been removed
+            if xattr -p com.apple.quarantine "$dylib" 2>/dev/null; then
+              echo "ERROR: quarantine attribute was not removed from $dylib"
+              exit 1
+            fi
+            # the signature must be valid and ad-hoc
+            codesign --verify --verbose 2 "$dylib"
+            codesign -dv "$dylib" 2>&1 | grep "Signature=adhoc"
+            # and no entitlements may be embedded (they are inert on dylibs)
+            if codesign -d --entitlements - "$dylib" 2>&1 | grep -q "com.apple.security"; then
+              echo "ERROR: entitlements should not be embedded in dylib $dylib"
+              exit 1
+            fi
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: artifact-macos-${{ matrix.python-version }}-${{ strategy.job-index }}        

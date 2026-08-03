@@ -79,7 +79,6 @@ RISSET_CLONES_PATH = RISSET_ROOT / "clones"
 RISSET_ASSETS_PATH = RISSET_ROOT / "assets"
 RISSET_OPCODESXML = RISSET_ROOT / "opcodes.xml"
 _MANPAGES_CACHE_DIR = RISSET_ROOT / "manpage-cache"
-MACOS_ENTITLEMENTS_PATH = RISSET_ASSETS_PATH / 'csoundplugins.entitlements'
 
 UNKNOWN_VERSION = "Unknown"
 
@@ -96,57 +95,43 @@ _supported_platforms = {
 _UNSET = object()
 
 
-_entitlements_str = r"""
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.cs.disable-library-validation</key>
-    <true/>
-    <key>com.apple.security.device.audio-input</key>
-    <true/>
-    <key>com.apple.security.device.camera</key>
-    <true/>
-</dict>
-</plist>
-"""
+def _macos_remove_quarantine(path: Path) -> None:
+    """
+    Remove the com.apple.quarantine extended attribute from the given file
+    (and from the containing folder, which Gatekeeper also checks).
 
-
-def _macos_save_entitlements(session: _Session) -> Path:
-    path = MACOS_ENTITLEMENTS_PATH
-    _ensure_parent_exists(path)
-    if not _session.entitlements_saved:
-        with open(path, 'w') as f:
-            f.write(_entitlements_str)
-        assert os.path.exists(path)
-        plutil = shutil.which('plutil')
-        if plutil:
-            _debug(f"Verifying that the entitlements file '{path}' is a valid plist")
-            _subproc_call([plutil, path.as_posix()])
-        session.entitlements_saved = True
-        _debug(f"Saved entitlements file to {path}")
-        _debug(f"Entitlements:\n{open(path).read()}\n------------ end entitlements")
-
-    return path
-
-# SIGNATURE_ID="-"
-# codesign --force --sign "${SIGNATURE_ID}" --entitlements csoundplugins.entitlements "/path/to/dylib"
+    Gatekeeper refuses to load quarantined, non-notarized code. This
+    attribute is set by macOS on files downloaded from the internet, and
+    clearing it is required for csound to be able to dlopen a plugin.
+    """
+    xattr = shutil.which('xattr')
+    if not xattr:
+        return
+    for target in (path, path.parent):
+        _subproc_call([xattr, '-dr', 'com.apple.quarantine', target.as_posix()])
 
 
 def macos_codesign(dylibpaths: list[str], signature='-') -> None:
     """
-    Codesign the given library binaries using entitlements
+    Clear quarantine attributes and code-sign the given library binaries
+
+    Entitlements are deliberately NOT applied: the kernel only enforces
+    entitlements on the main executable of a process, so entitlements
+    embedded in a dylib loaded via dlopen (e.g.
+    com.apple.security.cs.disable-library-validation) are ignored. What
+    matters is that the plugin be validly signed and not quarantined.
 
     Args:
         dylibpaths: a list of paths to codesign
-        signature: the signature used. '-' indicates to sign it locally
+        signature: the signature used. '-' indicates to sign it locally (ad-hoc)
     """
     if not shutil.which('codesign'):
         raise RuntimeError("Could not find the binary 'codesign' in the path")
-    entitlements_path = _macos_save_entitlements(_session)
-    assert os.path.exists(entitlements_path)
     for dylibpath in dylibpaths:
-        _subproc_call(['codesign', '--force', '--sign', signature, '--entitlements', entitlements_path.as_posix(), dylibpath])
+        _macos_remove_quarantine(Path(dylibpath))
+        ret = _subproc_call(['codesign', '--force', '--sign', signature, dylibpath])
+        if ret != 0:
+            raise RuntimeError(f"Code signing failed for '{dylibpath}' (exit code {ret})")
         _debug("Verifying code signing")
         _subproc_call(['codesign', '--display', '--verbose', dylibpath])
 
@@ -280,7 +265,6 @@ class _Session:
         """Csound version id as integer, 6190 = 6.19, 7000 = 7.0"""
 
         self.stop_on_errors = True
-        self.entitlements_saved = False
         self.cache = {}
 
     def _platform_id(self) -> str:
@@ -2408,6 +2392,7 @@ class MainIndex:
 
         # installation succeeded, check that it works
         if not self.is_plugin_installed(plugin, check=check):
+            fixed = False
             if platformid.startswith('macos'):
                 # try code signing the binary
                 _debug(f"The binary '{installed_path.as_posix()}' was installed but it is not recognized by csound. "
@@ -2415,17 +2400,19 @@ class MainIndex:
                 macos_codesign([installed_path.as_posix()])
                 if self._is_plugin_recognized_by_csound(plugin):
                     _debug("... Ok, that worked. ")
+                    fixed = True
                 else:
                     _errormsg(f"The plugin '{plugin.name}' was not recognized. The reason might be that the binary"
                               f" needs to be code-signed. ")
 
-            if not check:
-                return ErrorMsg(f"Tried to install plugin {plugin.name}, but the binary"
-                                f" is not present.")
-            else:
-                return ErrorMsg(f"Tried to install plugin {plugin.name}, but opcode "
-                                f"{plugin.opcodes[0]}, which is provided by this plugin, "
-                                f"is not present")
+            if not fixed:
+                if not check:
+                    return ErrorMsg(f"Tried to install plugin {plugin.name}, but the binary"
+                                    f" is not present.")
+                else:
+                    return ErrorMsg(f"Tried to install plugin {plugin.name}, but opcode "
+                                    f"{plugin.opcodes[0]}, which is provided by this plugin, "
+                                    f"is not present")
 
         # Install assets, if any
         assetfiles = []
