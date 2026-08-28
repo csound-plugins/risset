@@ -857,7 +857,7 @@ class InstalledPluginInfo:
     """
     name: str
     dllpath: Path
-    versionstr: str | None
+    versionstr: str = ''
     installed_manifest_path: Path | None = None
     installed_in_system_folder: bool = False
 
@@ -1365,6 +1365,7 @@ def _parse_asset(assetdef: dict, defaultsource: str) -> Asset:
     extractpath = assetdef.get('extractpath') or assetdef.get('path')
     if not source and not extractpath:
         raise ParseError("Asset definition should have an URL or an extractpath key")
+    assert extractpath
     paths = extractpath.split(";") if extractpath else []
     return Asset(source=source, patterns=paths, platform=assetdef.get('platform', 'all'), name=assetdef.get('name', ''))
 
@@ -1782,8 +1783,7 @@ def user_installed_dlls(majorversion: int | None = None, pluginspath: str | Path
     elif majorversion != _session.csound_version_tuple[0]:
         _debug(f"Querying installed dlls for csound version {majorversion}, "
                f"csound's version is {_session.csound_version_tuple}")
-
-    path = pluginspath or user_plugins_path(version=majorversion)
+    path = Path(pluginspath) if pluginspath else user_plugins_path(version=majorversion)
     out = list(path.glob("*" + _plugin_extension())) if path and path.exists() else []
     return out
 
@@ -2525,7 +2525,7 @@ class MainIndex:
         return d
 
     def available_plugins(self, platformid: str = '', csound_version: int = 0, installed_only=False,
-                          not_installed_only=False, method='api', check=True
+                          not_installed_only=False, check=True
                           ) -> list[Plugin]:
         if not platformid:
             platformid = _session.platformid
@@ -2536,9 +2536,9 @@ class MainIndex:
         plugins = []
         for plugin in self.plugins.values():
             if plugin.find_binary(platformid=platformid, csound_version=csound_version):
-                if installed_only and not self.is_plugin_installed(plugin, check=check, method=method):
+                if installed_only and not self.is_plugin_installed(plugin, check=check):
                     continue
-                elif not_installed_only and self.is_plugin_installed(plugin, check=check, method=method):
+                elif not_installed_only and self.is_plugin_installed(plugin, check=check):
                     continue
                 plugins.append(plugin)
         return plugins
