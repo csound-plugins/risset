@@ -61,6 +61,10 @@ def _data_dir_for_platform() -> Path:
     """
     platform = sys.platform
     if platform == 'linux':
+        if 'FLATPAK_ID' in os.environ:
+            xdghome = os.environ.get("XDG_DATA_HOME")
+            assert xdghome
+            return Path(xdghome)
         return Path("~/.local/share").expanduser()
     elif platform == 'darwin':
         return Path("~/Library/Application Support").expanduser()
@@ -192,7 +196,8 @@ def _platform_architecture() -> str:
 
 
 def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
-    """Returns a tuple (major, minor) using the csound api
+    """
+    Returns a tuple (major, minor) using the csound api
 
     Args:
         libcsoundpath: the path to libcsoun64 if using an ad-hoc installation
@@ -202,7 +207,7 @@ def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
     """
     if libcsoundpath:
         if not os.path.exists(libcsoundpath):
-            raise IOError(f"Given path '{libcsoundpath}' does not exist")
+            raise OSError(f"Given path '{libcsoundpath}' does not exist")
 
         import ctypes
         try:
@@ -210,7 +215,7 @@ def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
             libcsound.csoundGetVersion.restype = ctypes.c_int32
             versionid = libcsound.CsoundGetVersion()
         except OSError as e:
-            raise IOError(f"Could not load libcsound from '{libcsoundpath}': {e}")
+            raise OSError(f"Could not load libcsound from '{libcsoundpath}': {e}")
     else:
         import libcsound
         versionid = libcsound.VERSION
@@ -235,7 +240,7 @@ class _Session:
         _Session.instance = instance
         return instance
 
-    def __init__(self):
+    def __init__(self, debug=False):
         self.downloaded_files: dict[str, Path] = {}
         self.cloned_repos: dict[str, Path] = {}
         self.platform: str = {
@@ -250,13 +255,21 @@ class _Session:
         self.platformid = self._platform_id()
         """The pair <os>-<arch> (linux-x86_64, windows-x86_64, macos-arm64, etc"""
 
-        major, minor = _csoundlib_version()
+        self.debug = debug
 
-        self.debug = False
-        """True if in debug mode"""
+        self.stop_on_errors = True
+
+        self.cache = {}
 
         self.no_color = False
         """True if color output is disabled"""
+
+        try:
+            major, minor = _csoundlib_version()
+        except OSError as e:
+            print(f"csound (libcsound) not found: {e}", file=sys.stderr)
+            # Allow risset to manage plugins even in the absence of a csound installation
+            major, minor = 7, 0
 
         self.csound_version_tuple = (major, minor)
         """Csound version as (major, minor)"""
@@ -264,8 +277,11 @@ class _Session:
         self.csound_version: int = major * 1000 + minor * 10
         """Csound version id as integer, 6190 = 6.19, 7000 = 7.0"""
 
-        self.stop_on_errors = True
-        self.cache = {}
+
+    def __repr__(self) -> str:
+        return (f"Session(debug={self.debug}, csound_version_tuple={self.csound_version_tuple}, "
+                f"platformid={self.platformid}, cache={self.cache}, "
+                f"downloaded_files={self.downloaded_files})")
 
     def _platform_id(self) -> str:
         """
@@ -875,7 +891,7 @@ def user_plugins_path(version: int | tuple[int, int] | None = None) -> Path:
         version: the csound version for which to determine the user plugins path
 
     Returns:
-        the user plugins path, as a Path object
+        the user plugins path, as a Path object. It does not need to exist
     """
     if version is None:
         version = _session.csound_version_tuple[0]
@@ -890,18 +906,26 @@ def user_plugins_path(version: int | tuple[int, int] | None = None) -> Path:
                         f"got {version}")
     cs_user_plugindir = os.getenv("CS_USER_PLUGINDIR")
 
-    if cs_user_plugindir is not None and os.path.exists(cs_user_plugindir):
+    if cs_user_plugindir is not None:
         return Path(cs_user_plugindir)
     key = f'user_plugins_path_{major}.{minor}'
     if path := _session.cache.get(key):
         assert isinstance(path, Path)
         return path
     else:
-        pluginsdir = {
-            'linux': f'$HOME/.local/lib/csound/{major}.{minor}/plugins64',
-            'win32': f'C:\\Users\\$USERNAME\\AppData\\Local\\csound\\{major}.{minor}\\plugins64',
-            'darwin': f'$HOME/Library/csound/{major}.{minor}/plugins64'
-        }[sys.platform]
+        if sys.platform == 'linux':
+            if "FLATPAK_ID" in os.environ:
+                xdgdata = os.getenv("XDG_DATA_HOME")
+                assert xdgdata is not None
+                pluginsdir = Path(xdgdata) / f"csound/{major}.{minor}/plugins64"
+            else:
+                pluginsdir = f'$HOME/.local/lib/csound/{major}.{minor}/plugins64'
+        elif sys.platform == 'win32':
+            pluginsdir = f'C:\\Users\\$USERNAME\\AppData\\Local\\csound\\{major}.{minor}\\plugins64'
+        elif sys.platform == 'darwin':
+            pluginsdir = f'$HOME/Library/csound/{major}.{minor}/plugins64'
+        else:
+            raise RuntimeError(f"Platform not supported: {sys.platform}")
         out = Path(os.path.expandvars(pluginsdir))
         _session.cache[key] = out
         return out
@@ -1006,17 +1030,22 @@ def _csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='') -> se
     oldenv = os.environ.copy()
     if libcsound_path:
         if not os.path.exists(libcsound_path):
-            raise IOError(f"The given libcsound path does not exist: '{libcsound_path}'")
+            raise OSError(f"The given libcsound path does not exist: '{libcsound_path}'")
         os.environ['LIBCSOUNDPATH'] = libcsound_path
 
     if user_plugins_dir:
         if not os.path.exists(user_plugins_dir):
-            raise IOError(f"The given user plugins path does not exist: '{user_plugins_dir}'")
+            raise OSError(f"The given user plugins path does not exist: '{user_plugins_dir}'")
         os.environ['CS_USER_PLUGINDIR'] = user_plugins_dir
 
-    import libcsound
-    cs = libcsound.Csound(opcodeDir=opcode_dir)
-    out = set(opcode.name for opcode in cs.getOpcodes())
+    try:
+        import libcsound
+        cs = libcsound.Csound(opcodeDir=opcode_dir)
+        out = {opcode.name for opcode in cs.getOpcodes()}
+    except OSError as e:
+        _debug(f"csound (libcsound) not found: {e}")
+        out = set()
+
     os.environ.update(oldenv)
     return out
 
@@ -1204,9 +1233,9 @@ def _find_system_plugins_path(possible_paths: list[Path], majorversion) -> Path 
             dll = "libarrayops" + ext
     elif majorversion == 7:
         if sys.platform == 'win32':
-            dll = "rtpa.dll"
+            dll = "arrays.dll"
         else:
-            dll = "librtpa" + ext
+            dll = "libarrays" + ext
     else:
         raise ValueError(f"Expected 6 or 7, got {majorversion}")
 
@@ -1619,7 +1648,8 @@ def _download_file(url: str, destination_folder='', cache=True) -> Path:
         destination_folder = tempfile.gettempdir()
     destpath = Path(destination_folder) / baseoutfile
     _debug(f"Writing downloaded content from url '{url}' to file '{destpath}'")
-    open(destpath, 'wb').write(resp.content)
+    with open(destpath, 'wb') as f:
+        f.write(resp.content)
     _session.downloaded_files[url] = destpath
     return destpath
 
@@ -1656,6 +1686,9 @@ def default_system_plugins_path(major: int | None = None, minor=0) -> list[Path]
                          f"/usr/lib/csound/plugins64-{major}.{minor}",
                          f"/usr/lib/x86_64-linux-gnu/csound/plugins64-{major}.{minor}",
         ]
+        if 'FLATPAK_ID' in os.environ:
+            possible_dirs.append(f"/app/lib/csound/plugins64-{major}.{minor}")
+
         if _session.architecture == 'arm64':
             # This is where debian in raspberry pi installs csound's plugins
             # https://packages.debian.org/bullseye/armhf/libcsound64-6.0/filelist
@@ -1763,7 +1796,12 @@ def system_installed_dlls(majorversion: int | None = None) -> list[Path]:
         majorversion = _session.csound_version_tuple[0]
     if (out := _session.cache.get(f'system_installed_dlls_{majorversion}')) is None:
         path = system_plugins_path(majorversion=majorversion)
-        out = list(path.glob("*" + _plugin_extension())) if path and path.exists() else []
+        if path is not None and path.exists():
+            ext = _plugin_extension()
+            out = list(path.glob("*" + ext))
+        else:
+            out = []
+            _debug(f"WARNING! No system plugins found! path: {path}, csound version: {majorversion}")
         _session.cache[f'system_installed_dlls_{majorversion}'] = out
     return out
 
@@ -1783,11 +1821,16 @@ class MainIndex:
             update: if True, update index prior to parsing
             plugins_path: path to the user plugins path, if this is not the default.
         """
+        csound_installed = True
         if major_version is None:
-            # major, minor = _csound_version()
-            major, minor = _csoundlib_version()
-            if not (major == 6 or major == 7):
-                raise RuntimeError(f"Csound version {major}.{minor} not supported")
+            try:
+                major, minor = _csoundlib_version()
+            except OSError as e:
+                _debug(f"csound (libcsound) not found: {e}, assuming csound 7")
+                major, minor = 7, 0
+                csound_installed = False
+
+            assert major == 6 or major == 7
             major_version = major
 
         if data_repo is None:
@@ -1804,6 +1847,7 @@ class MainIndex:
         assert _is_git_repo(data_repo)
         assert self.indexfile.exists(), f"Main index file not found, searched: {self.indexfile}"
 
+        self.csound_installed = csound_installed
         self.datarepo: Path = data_repo
         self.majorversion: int = major_version
         self.pluginsources: dict[str, IndexItem] = {}
@@ -2035,7 +2079,7 @@ class MainIndex:
             return None
 
         binfile = binary.binary_filename()
-        dll, user_installed = self.installed_path_for_dll(binfile)
+        dll, _ = self.installed_path_for_dll(binfile)
         return dll
 
     def is_plugin_installed(self, plugin: Plugin, check=True) -> bool:
@@ -2062,7 +2106,7 @@ class MainIndex:
         binfile = binary.binary_filename()
         if not binfile:
             return False
-        dll, user_installed = self.installed_path_for_dll(binfile)
+        dll, _ = self.installed_path_for_dll(binfile)
         if dll is None:
             return False
         return True if not check else self._is_plugin_recognized_by_csound(plugin)
@@ -2123,7 +2167,7 @@ class MainIndex:
                    f". Binaries: {plugin.binaries}")
             return None
         binfile = binary.binary_filename()
-        dll, user_installed = self.installed_path_for_dll(binfile)
+        dll, _ = self.installed_path_for_dll(binfile)
         if not dll:
             return None
 
@@ -3258,6 +3302,7 @@ def cmd_info(idx: MainIndex, args) -> str:
         'indexfile': idx.indexfile.as_posix(),
         'manpage-cache': _MANPAGES_CACHE_DIR.as_posix() if _MANPAGES_CACHE_DIR.exists() else '',
         'csound-version': ".".join(str(part) for part in _session.csound_version_tuple),
+        'csound-installed': idx.csound_installed,
         'installed-plugins': [plugin.name for plugin in idx.plugins.values()
                               if idx.is_plugin_installed(plugin, check=False)]
     }
@@ -3605,11 +3650,9 @@ def main():
 
     update = args.update or args.command == 'update'
 
-    csoundversion, minor = _csoundlib_version()
-
     try:
-        _debug(f"Creating main index - csound major version: {csoundversion}")
-        mainindex = MainIndex(update=update, major_version=csoundversion, plugins_path=args.user_plugins_path)
+        mainindex = MainIndex(update=update, plugins_path=args.user_plugins_path)
+
     except Exception as e:
         _errormsg("Failed to create main index")
         if _session.debug:
