@@ -133,6 +133,14 @@ def macos_codesign(dylibpaths: list[str], signature='-') -> None:
         raise RuntimeError("Could not find the binary 'codesign' in the path")
     for dylibpath in dylibpaths:
         _macos_remove_quarantine(Path(dylibpath))
+        # Some plugin binaries ship with a legacy or malformed code signature
+        # (for example, a bare CodeDirectory blob instead of an embedded
+        # signature superblob). Re-signing such a file with plain
+        # `codesign --force --sign -` can silently produce a new signature that
+        # codesign itself cannot read back, which makes `codesign --verify`
+        # fail with "No such process". Strip any existing signature first so
+        # that we always sign from a clean slate.
+        _subproc_call(['codesign', '--force', '--remove-signature', dylibpath])
         ret = _subproc_call(['codesign', '--force', '--sign', signature, dylibpath])
         if ret != 0:
             raise RuntimeError(f"Code signing failed for '{dylibpath}' (exit code {ret})")
