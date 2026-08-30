@@ -38,7 +38,7 @@ jobs:
           cd csound
           sudo apt-get update && sudo apt-get install cmake libsndfile1-dev libasound2-dev libjack-dev portaudio19-dev libportmidi-dev libpulse-dev swig default-jdk liblo-dev libpng-dev libgmm++-dev bison flex libportsmf-dev libcunit1-dev
           mkdir build && cd build
-          cmake .. -DUSE_MP3=0 -DBUILD_LUA_INTERFACE=OFF -DBUILD_DSSI_OPCODES=OFF -DBUILD_JAVA_INTERFACE=OFF
+          cmake .. -DUSE_MP3=0 -DBUILD_LUA_INTERFACE=OFF -DBUILD_DSSI_OPCODES=OFF -DBUILD_JAVA_INTERFACE=OFF -DBUILD_UTILITIES=OFF -DBUILD_TESTS=OFF -DBUILD_DEPRECATED_OPCODES=OFF
           cmake --build . --parallel
           sudo make install
           export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
@@ -105,8 +105,8 @@ jobs:
           New-Item -Type Directory -Force "C:/Program Files/csound"
           cp .\csound-binaries\build\Release\* "C:/Program Files/csound"
 
-          [Environment]::SetEnvironmentVariable("PATH", $Env:PATH + ";C:\Program Files\csound", [EnvironmentVariableTarget]::Machine)
-          $Env:Path = $Env:Path + ";C:\Program Files\csound"
+          [Environment]::SetEnvironmentVariable("PATH", $Env:Path, [EnvironmentVariableTarget]::Machine)          
+          $Env:Path = "C:\Program Files\csound;$Env:Path"        
           Write-Output $Env:PATH
           csound.exe --version
 
@@ -121,7 +121,7 @@ jobs:
 
           choco install -y winflexbison3 innosetup
           .\vcpkg\bootstrap-vcpkg.bat
-          cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTS=0 -DUSE_VCPKG=1 -DCUSTOM_CMAKE="./platform/windows/Custom-vs.cmake" -DBUILD_JAVA_INTERFACE=OFF -DBUILD_TESTS=OFF
+          cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTS=0 -DUSE_VCPKG=1 -DCUSTOM_CMAKE="./platform/windows/Custom-vs.cmake" -DBUILD_JAVA_INTERFACE=OFF -DBUILD_TESTS=OFF -DBUILD_UTILITIES=OFF
           cmake --build build --config Release
 
           Get-ChildItem -Path ".\build" -Recurse
@@ -134,8 +134,8 @@ jobs:
 
       - name: windows - test install from git
         run: |
-          $Env:Path = $Env:Path + ";C:\Program Files\csound"
-
+          $Env:Path = "C:\Program Files\csound;$Env:Path"        
+          
           python -c "import platform; print('platform.machine: ', platform.machine())"
 
           pip install .
