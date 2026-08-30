@@ -121,7 +121,7 @@ jobs:
           choco install -y winflexbison3 innosetup ninja
           .\vcpkg\bootstrap-vcpkg.bat
 
-          cmake -B build -S . -G Ninja -A x64 `
+          cmake -B build -S . -G Ninja `
             -DBUILD_TESTS=OFF `
             -DUSE_VCPKG=1 `
             -DCUSTOM_CMAKE="./platform/windows/Custom-vs.cmake" `
