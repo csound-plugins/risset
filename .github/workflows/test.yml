@@ -132,13 +132,15 @@ jobs:
           $Env:Path = $Env:Path + ";C:/Program Files/csound"
           csound.exe --version
 
-      - name: windows - test install from git
+      - name: windows - test risset
         run: |
+          dir "C:\Program Files\csound" -r
           $Env:Path = "C:\Program Files\csound;$Env:Path"        
           
           python -c "import platform; print('platform.machine: ', platform.machine())"
 
           pip install .
+          risset info
           risset update
           risset list
           risset install klib else
