@@ -153,9 +153,8 @@ jobs:
           cmake --build build
           cmake --install build --prefix "C:/Program Files/csound"
 
-          $machinePath = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine')
-          [System.Environment]::SetEnvironmentVariable("PATH", $machinePath + ";C:/Program Files/csound", [EnvironmentVariableTarget]::Machine)
-          $Env:Path = $Env:Path + ";C:/Program Files/csound"
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\csound\bin"
+          $Env:Path = "C:\Program Files\csound\bin;$Env:Path"        
           csound.exe --version
 
       - name: save csound build cache
@@ -168,7 +167,7 @@ jobs:
       - name: windows - test risset
         run: |
           dir "C:\Program Files\csound" -r
-          $Env:Path = "C:\Program Files\csound;$Env:Path"        
+          $Env:Path = "C:\Program Files\csound\bin;$Env:Path"        
           
           python -c "import platform; print('platform.machine: ', platform.machine())"
 
