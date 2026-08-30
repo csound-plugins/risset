@@ -109,19 +109,40 @@ jobs:
           $Env:Path = "C:\Program Files\csound;$Env:Path"        
           Write-Output $Env:PATH
           csound.exe --version
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.csound-branch == 'develop'
+        with:
+          arch: x64
+
+      - name: checkout csound develop
+        if: matrix.csound-branch == 'develop'
+        run: |
+          git clone -b develop https://github.com/csound/csound --depth 1
+          cd csound
+          git submodule update --init --recursive
+          $csoundSha = git rev-parse HEAD
+          Write-Output "CSOUND_SHA=$csoundSha" | Out-File -Append $env:GITHUB_ENV
+
+      - name: restore csound build cache
+        id: restore-cache
+        if: matrix.csound-branch == 'develop'
+        uses: actions/cache/restore@v4
+        with:
+          path: csound/build
+          key: csound-build-${{ runner.os }}-${{ env.CSOUND_SHA }}-${{ hashFiles('.github/workflows/test.yml') }}
+          restore-keys: csound-build-${{ runner.os }}-
+
       - name: install csound develop
         if: matrix.csound-branch == 'develop'
         env:
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
         run: |
-          git clone -b develop https://github.com/csound/csound --depth 1
-          cd csound
-          git submodule update --init --recursive
-
           choco install -y winflexbison3 innosetup ninja
+          cd csound
           .\vcpkg\bootstrap-vcpkg.bat
 
           cmake -B build -S . -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
             -DBUILD_TESTS=OFF `
             -DUSE_VCPKG=1 `
             -DCUSTOM_CMAKE="./platform/windows/Custom-vs.cmake" `
@@ -136,6 +157,13 @@ jobs:
           [System.Environment]::SetEnvironmentVariable("PATH", $machinePath + ";C:/Program Files/csound", [EnvironmentVariableTarget]::Machine)
           $Env:Path = $Env:Path + ";C:/Program Files/csound"
           csound.exe --version
+
+      - name: save csound build cache
+        if: matrix.csound-branch == 'develop' && steps.restore-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: csound/build
+          key: csound-build-${{ runner.os }}-${{ env.CSOUND_SHA }}-${{ hashFiles('.github/workflows/test.yml') }}-${{ github.run_id }}
 
       - name: windows - test risset
         run: |
