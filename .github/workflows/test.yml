@@ -109,7 +109,6 @@ jobs:
           $Env:Path = "C:\Program Files\csound;$Env:Path"        
           Write-Output $Env:PATH
           csound.exe --version
-
       - name: install csound develop
         if: matrix.csound-branch == 'develop'
         env:
@@ -119,13 +118,19 @@ jobs:
           cd csound
           git submodule update --init --recursive
 
-          choco install -y winflexbison3 innosetup
+          choco install -y winflexbison3 innosetup ninja
           .\vcpkg\bootstrap-vcpkg.bat
-          cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTS=0 -DUSE_VCPKG=1 -DCUSTOM_CMAKE="./platform/windows/Custom-vs.cmake" -DBUILD_JAVA_INTERFACE=OFF -DBUILD_TESTS=OFF -DBUILD_UTILITIES=OFF
-          cmake --build build --config Release
 
-          Get-ChildItem -Path ".\build" -Recurse
-          cmake --install build --config Release --prefix "C:/Program Files/csound"
+          cmake -B build -S . -G Ninja -A x64 `
+            -DBUILD_TESTS=OFF `
+            -DUSE_VCPKG=1 `
+            -DCUSTOM_CMAKE="./platform/windows/Custom-vs.cmake" `
+            -DBUILD_JAVA_INTERFACE=OFF `
+            -DBUILD_DSSI_OPCODES=OFF `
+            -DBUILD_UTILITIES=OFF
+
+          cmake --build build
+          cmake --install build --prefix "C:/Program Files/csound"
 
           $machinePath = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine')
           [System.Environment]::SetEnvironmentVariable("PATH", $machinePath + ";C:/Program Files/csound", [EnvironmentVariableTarget]::Machine)
