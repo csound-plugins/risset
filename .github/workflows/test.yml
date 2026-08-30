@@ -110,6 +110,12 @@ jobs:
           Write-Output $Env:PATH
           csound.exe --version
 
+      - name: Setup MSVC
+        if: matrix.csound-branch == 'develop'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: install csound develop
         if: matrix.csound-branch == 'develop'
         env:
