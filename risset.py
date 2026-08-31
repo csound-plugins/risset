@@ -644,6 +644,8 @@ class Binary:
 class ManPage:
     syntaxes: list[str]
     abstract: str
+    syntax_error: str = ''
+    is_gen: bool = False
 
 
 @dataclass
@@ -850,6 +852,7 @@ class Opcode:
     syntaxes: list[str] | None = None
     abstract: str = ''
     installed: bool = True
+    is_gen: bool = False
 
 
 @dataclass
@@ -2376,7 +2379,8 @@ class MainIndex:
                     _errormsg(f"No manpage for opcode {opcodename}!")
                 opcodes.append(Opcode(name=opcodename, plugin=plugin.name, installed=pluginstalled,
                                       abstract=manpage.abstract if manpage else '?',
-                                      syntaxes=manpage.syntaxes if manpage else []))
+                                      syntaxes=manpage.syntaxes if manpage else [],
+                                      is_gen=manpage.is_gen if manpage else False))
         opcodes.sort(key=lambda opc: opc.name.lower())
         self._cache[cachekey] = opcodes
         return opcodes
@@ -2805,12 +2809,17 @@ class MainIndex:
                 opcode = opcodes.get(opcodename)
                 if not opcode:
                     continue
+                if opcode.is_gen:
+                    # GEN routines (e.g. `f1 0 4096 "lorenz" ...`) are not opcodes
+                    _debug(f"Skipping GEN routine {opcodename}")
+                    continue
                 manpage = self.parse_manpage(opcodename)
                 if not manpage:
                     _errormsg(f"No manpage found for opcode {opcodename}, skipping")
                     continue
                 if not manpage.syntaxes:
-                    _errormsg(f"No syntaxes found for opcode {opcodename}, skipping")
+                    _errormsg(manpage.syntax_error
+                              or f"No syntaxes found for opcode {opcodename}, skipping")
                     continue
                 _(f"<opcode name={_xml_quoteattr(opcodename)}>", 2)
                 _(f"<desc>{_xml_escape(manpage.abstract)}</desc>", 3)
@@ -2942,6 +2951,72 @@ def _compile_docs(index: MainIndex, dest: Path, makeindex=True,
         _docs_generate_index(index, dest / "index.md")
 
 
+_MANPAGE_SYNTAX_TAG_RE = re.compile(r"^\s*#+\s+[s|S]yntax\s*$")
+_RETURN_VARS_RE = re.compile(
+    r"(?:"
+    r"(?:[a-zA-Z][a-zA-Z0-9_]*(?::[a-zA-Z])?(?:\[\s*\])*"   # a variable, e.g. `kres`, `dim:i`, `aout[]`
+    r"|\[(?:[^\[\]]|\[[^\]]*\])*\])"                        # a bracket group of outputs, e.g. `[a1, ...]`
+    r"\s*(?:,\s*)?"
+    r")*\s*=?\s*"
+)
+
+
+def _is_syntax_line(line: str, opcode: str) -> bool:
+    """
+    Return True if the given line (taken from the `# Syntax` section of a
+    manpage) describes the syntax of the given opcode.
+
+    A syntax line must contain the opcode name (as a whole word) either at the
+    beginning of the line or after a return-value list, which accepts both the
+    classic syntax (`ires opcode iarg1, karg2`) and the more modern
+    function-call style (`res:i = opcode(arg1, arg2)`) used by e.g. the semsys
+    manpages. Lines that merely mention the opcode in prose are rejected.
+    """
+    s = line.strip()
+    if not s:
+        return False
+    if s.startswith(("```", "#", "!", ";", ">", "|", "*", "-", "+", "<", "/", "`", "\\")):
+        return False
+    if s.startswith("MYFLT"):
+        return False
+    opc_re = r"(?<![A-Za-z0-9_])" + re.escape(opcode) + r"(?![A-Za-z0-9_])"
+    # GEN function-table statements, e.g. `f1 0 4096 "lorenz" 0 30 1600 ...`
+    if re.match(r"^f\d+\b", s):
+        return re.search(opc_re, s) is not None
+    m = re.search(opc_re, s)
+    if m:
+        # The text before the opcode must look like a (possibly empty) list of
+        # return values, otherwise the line is prose mentioning the opcode
+        prefix = s[:m.start()]
+        if '"' in prefix or '`' in prefix:
+            return False
+        return not prefix or _RETURN_VARS_RE.fullmatch(prefix) is not None
+    # The opcode name does not appear as-is: accept a line whose first token is
+    # a variant of the opcode name obtained by appending characters to it
+    # (e.g. `pyruni` in the manpage of `pyrun`). A line whose first token is
+    # only a *prefix* of the opcode (e.g. `dict_del` in the manpage of
+    # `dict_delk`) is treated as malformed by the caller.
+    firsttok = re.match(r"[A-Za-z0-9_]+", s)
+    if not firsttok:
+        return False
+    return firsttok.group(0).startswith(opcode)
+
+
+def _is_syntax_content_line(line: str) -> bool:
+    """
+    Return True if the given line (from the `# Syntax` section of a manpage) is
+    a non-empty content line, i.e. not a code fence, heading, comment,
+    admonition or other markdown construct. Used to detect a syntax block which
+    has content but whose opcode name is missing from it.
+    """
+    s = line.strip()
+    if not s:
+        return False
+    if s.startswith(("```", "#", "!", ";", ">", "|", "*", "-", "+", "<", "/", "`", "\\")):
+        return False
+    return not s.startswith("MYFLT")
+
+
 def _manpage_parse(manpage: Path, opcode: str) -> ManPage | None:
     if not manpage:
         _errormsg(f"Opcode {opcode} has no manpage")
@@ -2949,21 +3024,35 @@ def _manpage_parse(manpage: Path, opcode: str) -> ManPage | None:
 
     text = open(manpage).read()
     lines = text.splitlines()
-    it = iter(lines)
     abstract = ''
     syntaxlines = []
-    foundsyntaxtag = False
-    for line in it:
-        if re.search(r"^\s*#+\s+[s|S]yntax\s*$", line):
-            foundsyntaxtag = True
+    insyntax = False
+    had_syntax_content = False
+    syntax_error = ''
+    is_gen = False
+    for line in lines:
+        if not insyntax:
+            if _MANPAGE_SYNTAX_TAG_RE.search(line):
+                insyntax = True
+            continue
+        if re.search(r"^\s*[#!;/]", line):
             break
-    if foundsyntaxtag:
-        for line in it:
-            if re.search(r"^\s*[#!;/]", line):
-                break
-            elif opcode in line and (re.search(r"^\s*[akigS\[x]", line) or line.lstrip().startswith(opcode)):
-                syntax = line.strip().split(";", maxsplit=1)[0]
-                syntaxlines.append(syntax)
+        if _is_syntax_line(line, opcode):
+            syntax = line.strip().split(";", maxsplit=1)[0].strip()
+            syntaxlines.append(syntax)
+        elif _is_syntax_content_line(line):
+            had_syntax_content = True
+    if insyntax and had_syntax_content:
+        opc_re = r"(?<![A-Za-z0-9_])" + re.escape(opcode) + r"(?![A-Za-z0-9_])"
+        if not any(re.search(opc_re, syntax) for syntax in syntaxlines):
+            # the syntax block exists and has content, but the opcode name is
+            # missing from it (e.g. `dict_del ...` in the manpage of dict_delk)
+            syntax_error = f"Opcode {opcode} does not appear in the syntax line of its manpage"
+            syntaxlines = []
+    if syntaxlines:
+        # A GEN function-table statement, e.g. `f1 0 4096 "lorenz" 0 30 ...`,
+        # identifies the "opcode" as a GEN routine rather than an opcode
+        is_gen = any(re.match(r"^f\d+\b", syntax) for syntax in syntaxlines)
 
     if "# Abstract" in text:
         # the abstract would be all the text between # Abstract and the next #tag
@@ -2996,7 +3085,7 @@ def _manpage_parse(manpage: Path, opcode: str) -> ManPage | None:
                 abstract = line if not line.startswith("#") else ""
                 break
 
-    return ManPage(syntaxes=syntaxlines, abstract=abstract)
+    return ManPage(syntaxes=syntaxlines, abstract=abstract, syntax_error=syntax_error, is_gen=is_gen)
 
 
 def _docs_generate_index(index: MainIndex, outfile: Path) -> None:
