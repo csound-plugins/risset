@@ -31,6 +31,7 @@ from dataclasses import asdict as _asdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+from xml.sax.saxutils import escape as _xml_escape, quoteattr as _xml_quoteattr
 
 if TYPE_CHECKING:
     from typing import Any, Callable
@@ -2808,13 +2809,16 @@ class MainIndex:
                 if not manpage:
                     _errormsg(f"No manpage found for opcode {opcodename}, skipping")
                     continue
-                _(f'<opcode name="{opcodename}">', 2)
-                _(f"<desc>{manpage.abstract}</desc>", 3)
                 if not manpage.syntaxes:
                     _errormsg(f"No syntaxes found for opcode {opcodename}, skipping")
                     continue
+                _(f"<opcode name={_xml_quoteattr(opcodename)}>", 2)
+                _(f"<desc>{_xml_escape(manpage.abstract)}</desc>", 3)
                 for syntax in manpage.syntaxes:
-                    syntax = syntax.replace(opcodename, f"<opcodename>{opcodename}</opcodename>")
+                    escaped_opcodename = _xml_escape(opcodename)
+                    syntax = _xml_escape(syntax)
+                    syntax = syntax.replace(escaped_opcodename,
+                                            f"<opcodename>{escaped_opcodename}</opcodename>")
                     _(f"<synopsis>{syntax}</synopsis>", 3)
                 _("</opcode>", 2)
             _('</category>', 1)
