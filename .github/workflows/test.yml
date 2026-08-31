@@ -167,7 +167,7 @@ jobs:
       - name: windows - test risset
         run: |
           dir "C:\Program Files\csound" -r
-          $Env:Path = "C:\Program Files\csound\bin;$Env:Path"        
+          $Env:Path = "C:\Program Files\csound\bin;C:\Program Files\csound;$Env:Path"        
           
           python -c "import platform; print('platform.machine: ', platform.machine())"
 
