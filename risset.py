@@ -646,6 +646,7 @@ class ManPage:
     abstract: str
     syntax_error: str = ''
     is_gen: bool = False
+    example: str = ''
 
 
 @dataclass
@@ -2327,7 +2328,7 @@ class MainIndex:
             try:
                 with open(cachefile, "rb") as f:
                     cached_mtime, cached = pickle.load(f)
-                if cached_mtime == src_mtime and isinstance(cached, ManPage):
+                if cached_mtime == src_mtime and isinstance(cached, ManPage) and hasattr(cached, 'example'):
                     return cached
             except Exception as e:
                 _debug(f"Discarding invalid manpage cache for {opcode}: {e}")
@@ -2952,6 +2953,7 @@ def _compile_docs(index: MainIndex, dest: Path, makeindex=True,
 
 
 _MANPAGE_SYNTAX_TAG_RE = re.compile(r"^\s*#+\s+[s|S]yntax\s*$")
+_MANPAGE_EXAMPLE_TAG_RE = re.compile(r"^\s*#+\s*[eE]xamples?\s*$")
 _RETURN_VARS_RE = re.compile(
     r"(?:"
     r"(?:[a-zA-Z][a-zA-Z0-9_]*(?::[a-zA-Z])?(?:\[\s*\])*"   # a variable, e.g. `kres`, `dim:i`, `aout[]`
@@ -3075,7 +3077,7 @@ def _manpage_parse(manpage: Path, opcode: str) -> ManPage | None:
         for line in it:
             line = line.strip()
             if line:
-                if line.startswith("#") and line.split("")[-1] == opcode:
+                if line.startswith("#") and line.split()[-1] == opcode:
                     break
                 else:
                     raise ParseError(f"Expected title, got {line}")
@@ -3085,7 +3087,25 @@ def _manpage_parse(manpage: Path, opcode: str) -> ManPage | None:
                 abstract = line if not line.startswith("#") else ""
                 break
 
-    return ManPage(syntaxes=syntaxlines, abstract=abstract, syntax_error=syntax_error, is_gen=is_gen)
+    example = ''
+    inexample = False
+    for line in lines:
+        if not inexample:
+            if _MANPAGE_EXAMPLE_TAG_RE.search(line):
+                inexample = True
+            continue
+        if re.match(r"^\s*#+", line):
+            break
+        s = line.strip()
+        if not s or s.startswith("```"):
+            continue
+        example = s
+        break
+    if not example:
+        _debug(f"No example in manpage file {manpage}")
+
+    return ManPage(syntaxes=syntaxlines, abstract=abstract, syntax_error=syntax_error, is_gen=is_gen,
+                   example=example)
 
 
 def _docs_generate_index(index: MainIndex, outfile: Path) -> None:
@@ -3472,9 +3492,81 @@ def cmd_download(idx: MainIndex, args) -> str:
     return ''
 
 
+def _validate_manpages(root: dict, infile: str) -> str:
+    """
+    Validate the manpage of every opcode defined in the manifest
+
+    For each opcode it is checked that:
+        * the manpage file exists
+        * the manpage has a valid syntax definition (a syntax block
+          containing the opcode name)
+        * the manpage has an abstract
+        * the manpage has an example
+
+    Args:
+        root: the loaded manifest as a dict
+        infile: the path to the manifest file. It is used to resolve the doc
+            folder relative to the manifest and to build the error messages
+
+    Returns:
+        an empty str if ok, a list of errors (separated by ';') otherwise
+    """
+    try:
+        plugin = Plugin(
+            name=root['name'],
+            url='',
+            version=root.get('version', ''),
+            short_description=root.get('short_description', ''),
+            binaries=[],
+            opcodes=root.get('opcodes', []),
+            author=root.get('author', ''),
+            email=root.get('email', ''),
+            cloned_path=Path(infile).resolve().parent,
+            long_description=root.get('long_description', ''),
+            doc_folder=root.get('doc', 'doc'),
+        )
+    except Exception as e:
+        return f"Error in {infile}: Could not build plugin definition to validate manpages: {e}"
+
+    try:
+        plugin.resolve_doc_folder()
+    except OSError as e:
+        return f"Error in {infile}: {e}"
+
+    errors = []
+    for opcode in plugin.opcodes:
+        manpage = plugin.manpage(opcode)
+        if manpage is None:
+            errors.append(f"Opcode '{opcode}' has no manpage")
+            continue
+        try:
+            parsed = _manpage_parse(manpage, opcode)
+        except Exception as e:
+            errors.append(f"Opcode '{opcode}': error parsing manpage: {e}")
+            continue
+        if parsed is None:
+            errors.append(f"Opcode '{opcode}': manpage could not be parsed")
+            continue
+        if parsed.is_gen:
+            # a GEN function-table statement is not an opcode
+            continue
+        if not parsed.syntaxes:
+            errors.append(f"Opcode '{opcode}': "
+                          f"{parsed.syntax_error or 'manpage has no valid syntax definition'}")
+        if not parsed.abstract:
+            errors.append(f"Opcode '{opcode}': manpage has no abstract")
+        if not parsed.example:
+            errors.append(f"Opcode '{opcode}': manpage has no example")
+    allerrors = [f"Error in {infile}: {error}" for error in errors]
+    return '; '.join(allerrors) if allerrors else ''
+
+
 def validate_definition(infile: str) -> str:
     """
     Validate a risset.json definition
+
+    It checks the structure of the manifest itself, as well as the manpage of
+    each opcode defined in it. See `_validate_manpages`.
 
     Args:
         infile: the file to validate
@@ -3534,9 +3626,7 @@ def validate_definition(infile: str) -> str:
             else:
                 versionrangestr = binary['csound_version']
                 try:
-                    versionrange = _parse_version(versionrangestr)
-                    if versionrange.contains(5):
-                        return f"Invalid version range: {versionrangestr}"
+                    _parse_version(versionrangestr)
                 except ParseError as e:
                     return f"Invalid version in 'csound_version': {versionrangestr}, error: {e}"
 
@@ -3550,7 +3640,9 @@ def validate_definition(infile: str) -> str:
         errors.append(check(root, key))
     errors.append(check(root, "binaries", valuetype=list, validator=validate_bins))
     allerrors = [f"Error in {infile}: {error}" for error in errors if error]
-    return '; '.join(allerrors) if allerrors else ''
+    if allerrors:
+        return '; '.join(allerrors)
+    return _validate_manpages(root, infile)
 
 
 def cmd_validate(idx: MainIndex, args) -> str:
@@ -3715,7 +3807,8 @@ def main():
     download_cmd.set_defaults(func=cmd_download)
 
     # validate
-    validate_cmd = subparsers.add_parser("validate", help="Validate a risset.json definition")
+    validate_cmd = subparsers.add_parser("validate", help="Validate a risset.json definition and the "
+                                                          "manpage of each defined opcode")
     validate_cmd.add_argument('infile', help="File to validate. By default, a risset.json definition")
     validate_cmd.set_defaults(func=cmd_validate)
 
