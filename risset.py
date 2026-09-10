@@ -1028,7 +1028,7 @@ def _zip_extract_file(zipfile: Path, extractpath: str) -> Path:
     return _zip_extract(zipfile, [extractpath])[0]
 
 
-def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', variants=True
+def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', variants=False
                    ) -> set[str]:
     """
     Returns a set of installed opcodes
@@ -2058,7 +2058,7 @@ class MainIndex:
             True if the plugin is recognized by csound
         """
         test = plugin.opcodes[0]
-        opcodes = csound_opcodes()
+        opcodes = csound_opcodes(variants=False)
         return test in opcodes
 
     def plugin_installed_path(self, plugin: Plugin) -> Path | None:
@@ -2103,6 +2103,7 @@ class MainIndex:
             return False
         dll, _ = self.installed_path_for_dll(binfile)
         if dll is None:
+            _debug(f"installed path for dll '{binfile}' was not found")
             return False
         return True if not check else self._is_plugin_recognized_by_csound(plugin)
 
