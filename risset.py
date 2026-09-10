@@ -1028,14 +1028,18 @@ def _zip_extract_file(zipfile: Path, extractpath: str) -> Path:
     return _zip_extract(zipfile, [extractpath])[0]
 
 
-def _csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='') -> set[str]:
+def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', variants=True
+                   ) -> set[str]:
     """
     Returns a set of installed opcodes
 
     Args:
-        opcode_dir: overrides the path to search for plugins distributed with csound
+        opcode_dir: overrides the path (OPCODE7DIR64) to search for plugins distributed
+            with csound
         libcsound_path: path to a custom libcsound64 dll
         user_plugins_dir: path to a custom path for user installed plugins
+        variants: if True, returns all opcode variants ("exp.a", "exp.k", etc), otherwise
+            variants are stripped
 
     Returns:
         a set of strings with the names of all installed opcodes
@@ -1054,7 +1058,11 @@ def _csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='') -> se
     try:
         import libcsound
         cs = libcsound.Csound(opcodeDir=opcode_dir)
-        out = {opcode.name for opcode in cs.getOpcodes()}
+        opcodes = cs.getOpcodes()
+        if variants:
+            out = {opcode.name for opcode in opcodes}
+        else:
+            out = {opcode.name.split(".")[0] for opcode in opcodes}
     except OSError as e:
         _debug(f"csound (libcsound) not found: {e}")
         out = set()
@@ -1076,32 +1084,6 @@ def _get_path_separator() -> str:
     if sys.platform == "win32":
         return ";"
     return ":"
-
-
-# def _get_shell() -> str | None:
-#     """
-#     Returns one of "bash", "zsh", "fish"
-#
-#     If not able to get the given information, returns None
-#     In particular, in windows it returns None
-#     """
-#     if sys.platform == "win32":
-#         return
-#     shellenv = os.getenv("SHELL")
-#     if not shellenv:
-#         return None
-#     shell = os.path.split(shellenv)[1].strip()
-#     if shell in ("bash", "zsh", "fish"):
-#         return shell
-#     return None
-
-
-# def _get_csound_binary(binary) -> str | None:
-#     if (out := _session.cache.get('csound-bin', _UNSET)) is _UNSET:
-#         path = shutil.which(binary)
-#         _session.cache['csound-bin'] = out = path if path else None
-#     assert out is None or isinstance(out, str)
-#     return out
 
 
 def _get_git_binary() -> str:
@@ -2076,7 +2058,7 @@ class MainIndex:
             True if the plugin is recognized by csound
         """
         test = plugin.opcodes[0]
-        opcodes = _csound_opcodes()
+        opcodes = csound_opcodes()
         return test in opcodes
 
     def plugin_installed_path(self, plugin: Plugin) -> Path | None:
@@ -2887,12 +2869,18 @@ def _generate_documentation(index: MainIndex,
         open(opcodesxml, "w").write(xmlstr)
 
     if buildhtml:
+        if not _is_mkdocs_installed():
+            raise RuntimeError("mkdocs is needed to build the html documentation. Install it via 'pip install mkdocs'")
+
         mkdocsconfig = RISSET_DATAREPO_LOCALPATH / "assets" / "mkdocs.yml"
         if not mkdocsconfig.exists():
             raise IOError(f"Did not find mkdocs configuration file. Searched: {mkdocsconfig}")
-        if not _is_mkdocs_installed():
-            raise RuntimeError("mkdocs is needed to build the html documentation. Install it via 'pip install mkdocs'")
         shutil.copy(mkdocsconfig, dest)
+        stylesheet = RISSET_DATAREPO_LOCALPATH / "assets" / "syntax-highlighting.css"
+        if stylesheet.exists():
+            cssdir = dest / "css"
+            cssdir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(stylesheet, cssdir)
         _call_mkdocs(dest, "build")
 
     return dest
