@@ -1059,10 +1059,12 @@ def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', varian
         import libcsound
         cs = libcsound.Csound(opcodeDir=opcode_dir)
         opcodes = cs.getOpcodes()
+        cs.destroy()
         if variants:
             out = {opcode.name for opcode in opcodes}
         else:
             out = {opcode.name.split(".")[0] for opcode in opcodes}
+
     except OSError as e:
         _debug(f"csound (libcsound) not found: {e}")
         out = set()
@@ -2428,6 +2430,7 @@ class MainIndex:
         if not installed_path.exists():
             return ErrorMsg(f"Installation of plugin {plugin.name} failed, binary was not found in "
                             f"the expected path: {installed_path.as_posix()}")
+
 
         self._invalidate_installed()
 
