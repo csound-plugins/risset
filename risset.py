@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 import textwrap
 import urllib.parse
+from contextlib import contextmanager
 from dataclasses import asdict as _asdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -204,6 +205,36 @@ def _platform_architecture() -> str:
     raise RuntimeError(f"** Architecture not supported (machine='{machine}', {bits=}, {linkage=})")
 
 
+@contextmanager
+def _env_context(**kwargs: str | None):
+    """
+    Context manager to temporarily modify environment variables
+
+    Every variable given is restored to its previous value on exit. Variables
+    which were not set before are removed again. Passing None as a value unsets
+    the variable for the duration of the context.
+
+    Example::
+
+        with _env_context(LIBCSOUND_INSTALL='false'):
+            import libcsound
+    """
+    oldvalues = {key: os.environ.get(key) for key in kwargs}
+    try:
+        for key, value in kwargs.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        yield
+    finally:
+        for key, oldvalue in oldvalues.items():
+            if oldvalue is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = oldvalue
+
+
 def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
     """
     Returns a tuple (major, minor) using the csound api
@@ -212,22 +243,28 @@ def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
         libcsoundpath: the path to libcsoun64 if using an ad-hoc installation
 
     Returns:
-        the version as (major: int, minor: int) tuple
+        the version as (major: int, minor: int) tuple.
+
+    Raises:
+        ImportError: if libcsound could not be imported (probably because
+            csound/libcsound could not be found)
     """
+    versionid = 0
     if libcsoundpath:
         if not os.path.exists(libcsoundpath):
             raise OSError(f"Given path '{libcsoundpath}' does not exist")
 
         import ctypes
         try:
-            libcsound = ctypes.CDLL(libcsoundpath)
-            libcsound.csoundGetVersion.restype = ctypes.c_int32
-            versionid = libcsound.CsoundGetVersion()
+            dll = ctypes.CDLL(libcsoundpath)
+            dll.csoundGetVersion.restype = ctypes.c_int32
+            versionid = dll.CsoundGetVersion()
         except OSError as e:
             raise OSError(f"Could not load libcsound from '{libcsoundpath}': {e}")
     else:
-        import libcsound
-        versionid = libcsound.VERSION
+        with _env_context(LIBCSOUND_INSTALL='false'):
+            import libcsound
+            versionid = libcsound.VERSION
     major = versionid // 1000
     minor = (versionid - major*1000) // 10
     return major, minor
@@ -275,7 +312,7 @@ class _Session:
 
         try:
             major, minor = _csoundlib_version()
-        except OSError as e:
+        except (OSError, ImportError) as e:
             print(f"csound (libcsound) not found: {e}", file=sys.stderr)
             # Allow risset to manage plugins even in the absence of a csound installation
             major, minor = 7, 0
@@ -1044,32 +1081,30 @@ def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', varian
     Returns:
         a set of strings with the names of all installed opcodes
     """
-    oldenv = os.environ.copy()
+    env = {'LIBCSOUND_INSTALL': 'false'}
     if libcsound_path:
         if not os.path.exists(libcsound_path):
             raise OSError(f"The given libcsound path does not exist: '{libcsound_path}'")
-        os.environ['LIBCSOUNDPATH'] = libcsound_path
+        env['LIBCSOUNDPATH'] = libcsound_path
 
     if user_plugins_dir:
         if not os.path.exists(user_plugins_dir):
             raise OSError(f"The given user plugins path does not exist: '{user_plugins_dir}'")
-        os.environ['CS_USER_PLUGINDIR'] = user_plugins_dir
+        env['CS_USER_PLUGINDIR'] = user_plugins_dir
 
     try:
-        import libcsound
-        cs = libcsound.Csound(opcodeDir=opcode_dir)
-        opcodes = cs.getOpcodes()
-        cs.destroy()
-        if variants:
-            out = {opcode.name for opcode in opcodes}
-        else:
-            out = {opcode.name.split(".")[0] for opcode in opcodes}
-
-    except OSError as e:
+        with _env_context(**env):
+            import libcsound
+            cs = libcsound.Csound(opcodeDir=opcode_dir)
+            opcodes = cs.getOpcodes()
+            cs.destroy()
+            if variants:
+                out = {opcode.name for opcode in opcodes}
+            else:
+                out = {opcode.name.split(".")[0] for opcode in opcodes}
+    except (OSError, ImportError) as e:
         _debug(f"csound (libcsound) not found: {e}")
         out = set()
-
-    os.environ.update(oldenv)
     return out
 
 
@@ -3325,6 +3360,49 @@ def cmd_resetcache(args) -> str:
     return ''
 
 
+def cmd_csound_install(args) -> str:
+    """
+    Install csound via libcsound's bootstrapping installer
+
+    Importing ``libcsound`` triggers the download and installation of a
+    portable csound 7 build whenever no csound installation can be found.
+    Since risset imports libcsound with automatic installation disabled
+    (see ``_csoundlib_version``), this command explicitly imports it with
+    installation enabled.
+
+    If csound is already installed the installation is skipped, unless
+    ``--force`` is given.
+    """
+    if _session.platform == 'windows':
+        _info("Automatic installation of csound is not available on Windows.")
+        _info("Please install csound manually from https://csound.com/download.html")
+        return ''
+
+    try:
+        _csoundlib_version()
+        alreadyinstalled = True
+    except (OSError, ImportError):
+        alreadyinstalled = False
+
+    if alreadyinstalled and not args.force:
+        _info("csound is already installed")
+        _info("Use 'risset csound install --force' to reinstall it")
+        return ''
+
+    _info("Installing csound...")
+    try:
+        with _env_context(LIBCSOUND_INSTALL='true'):
+            import libcsound
+            version = libcsound.VERSION
+    except Exception as e:
+        return f"Could not install csound: {e}"
+
+    major = version // 1000
+    minor = (version - major * 1000) // 10
+    _info(f"csound {major}.{minor} installed successfully")
+    return ''
+
+
 def update_self():
     """Upgrade risset itself"""
     _info("Updating risset")
@@ -3816,6 +3894,13 @@ def main():
                               "codesign: code sign all installed plugins (macos only)")
     dev_cmd.set_defaults(func=cmd_dev)
 
+    # csound: manage the csound installation
+    csound_cmd = subparsers.add_parser("csound", help="Manage the csound installation")
+    csound_subparsers = csound_cmd.add_subparsers(dest='csound_command')
+    csound_install_cmd = csound_subparsers.add_parser("install", help="Install csound")
+    flag(csound_install_cmd, "--force", help="Reinstall csound even if it is already installed")
+    csound_install_cmd.set_defaults(func=cmd_csound_install)
+
 
     args = parser.parse_args()
     _session.debug = args.debug
@@ -3832,6 +3917,16 @@ def main():
         sys.exit(-1)
     elif args.command == 'resetcache':
         cmd_resetcache(args)
+        sys.exit(0)
+    elif args.command == 'csound':
+        if not args.csound_command:
+            csound_cmd.print_help()
+            sys.exit(-1)
+        errormsg = args.func(args)
+        if errormsg:
+            _errormsg(f"Command csound {args.csound_command} failed")
+            _errormsg(errormsg)
+            sys.exit(-1)
         sys.exit(0)
 
     update = args.update or args.command == 'update'
