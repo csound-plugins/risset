@@ -310,14 +310,27 @@ class _Session:
         self.no_color = False
         """True if color output is disabled"""
 
+        self.csound_found = False
+
+        self.ignore_csound = False
+        """If True, no checks depending on a csound installation are performed"""
+
+        self.csound_error: str | None = None
+        """Error message if csound/libcsound could not be found"""
+
         try:
             major, minor = _csoundlib_version()
+            self.csound_found = True
         except (OSError, ImportError) as e:
-            print(f"csound (libcsound) not found: {e}", file=sys.stderr)
+            self.csound_error = f"csound (libcsound) not found: {e}"
             # Allow risset to manage plugins even in the absence of a csound installation
             major, minor = 7, 0
+            # When --ignore-csound is given the message is logged via _debug
+            # (only shown with --debug), otherwise it is printed here as before
+            if '--ignore-csound' not in sys.argv:
+                print(self.csound_error, file=sys.stderr)
 
-        self.csound_version_tuple = (major, minor)
+        self.csound_version_tuple: tuple[int, int] = (major, minor)
         """Csound version as (major, minor)"""
 
         self.csound_version: int = major * 1000 + minor * 10
@@ -1068,7 +1081,7 @@ def _zip_extract_file(zipfile: Path, extractpath: str) -> Path:
 def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', variants=False
                    ) -> set[str]:
     """
-    Returns a set of installed opcodes
+    Returns the set of opcodes detected by csound
 
     Args:
         opcode_dir: overrides the path (OPCODE7DIR64) to search for plugins distributed
@@ -1079,7 +1092,7 @@ def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', varian
             variants are stripped
 
     Returns:
-        a set of strings with the names of all installed opcodes
+        a set of strings with the names of all detected opcodes
     """
     env = {'LIBCSOUND_INSTALL': 'false'}
     if libcsound_path:
@@ -1091,6 +1104,9 @@ def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', varian
         if not os.path.exists(user_plugins_dir):
             raise OSError(f"The given user plugins path does not exist: '{user_plugins_dir}'")
         env['CS_USER_PLUGINDIR'] = user_plugins_dir
+
+    if not _session.csound_found:
+        raise ImportError("csound not found, cannot query detected opcodes")
 
     try:
         with _env_context(**env):
@@ -1853,16 +1869,17 @@ class MainIndex:
             update: if True, update index prior to parsing
             plugins_path: path to the user plugins path, if this is not the default.
         """
-        csound_installed = True
+        csound_installed = _session.csound_found
         if major_version is None:
-            try:
-                major, minor = _csoundlib_version()
-            except OSError as e:
-                _debug(f"csound (libcsound) not found: {e}, assuming csound 7")
-                major, minor = 7, 0
-                csound_installed = False
-
-            assert major == 6 or major == 7
+            major, minor = _session.csound_version_tuple
+            # try:
+            #     major, minor = _csoundlib_version()
+            # except (ImportError, OSError) as e:
+            #     _debug(f"csound (libcsound) not found: {e}, assuming csound 7")
+            #     major, minor = 7, 0
+            #     csound_installed = False
+            #
+            # assert major == 6 or major == 7
             major_version = major
 
         if data_repo is None:
@@ -2142,7 +2159,9 @@ class MainIndex:
         if dll is None:
             _debug(f"installed path for dll '{binfile}' was not found")
             return False
-        return True if not check else self._is_plugin_recognized_by_csound(plugin)
+        if not check or _session.ignore_csound:
+            return True
+        return self._is_plugin_recognized_by_csound(plugin)
 
     def _find_manpage_source(self, opcode: str) -> tuple[Plugin, Path] | None:
         """
@@ -3768,6 +3787,9 @@ def main():
     # Main parser
     parser = argparse.ArgumentParser()
     flag(parser, "--debug", help="Print debug information")
+    flag(parser, "--ignore-csound", help="Do not fail or print a warning if csound is not found. "
+                                         "In this mode no checks depending on a csound installation "
+                                         "can be performed")
     flag(parser, "--no-color", help="Disable colored output")
     flag(parser, "--update", help="Update the plugins data before any action")
     flag(parser, "--stop-on-error", help="Stop parsing if an error is detected")
@@ -3906,6 +3928,11 @@ def main():
     _session.debug = args.debug
     _session.no_color = args.no_color
     _session.stop_on_errors = args.stop_on_error
+    _session.ignore_csound = args.ignore_csound and not _session.csound_found
+
+    if _session.csound_error and _session.ignore_csound:
+        # Only visible when --debug is given
+        _debug(_session.csound_error)
 
     if args.version:
         from importlib.metadata import version
