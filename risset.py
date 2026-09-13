@@ -316,6 +316,9 @@ class _Session:
         self._csound_version_tuple: tuple[int, int] | None = None
 
     def csound_found(self) -> bool:
+        """
+        True if csound/libcsound was found
+        """
         _ = self.csound_version_tuple  # force calculation
         return not bool(self.csound_error)
 
@@ -1117,7 +1120,7 @@ def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', varian
             raise OSError(f"The given user plugins path does not exist: '{user_plugins_dir}'")
         env['CS_USER_PLUGINDIR'] = user_plugins_dir
 
-    if not _session.csound_found:
+    if not _session.csound_found():
         raise ImportError("csound not found, cannot query detected opcodes")
 
     try:
@@ -1877,7 +1880,7 @@ class MainIndex:
             update: if True, update index prior to parsing
             plugins_path: path to the user plugins path, if this is not the default.
         """
-        csound_installed = _session.csound_found
+        csound_installed: bool = _session.csound_found()
         if major_version is None:
             major, minor = _session.csound_version_tuple
             major_version = major
