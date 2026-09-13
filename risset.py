@@ -310,32 +310,40 @@ class _Session:
         self.no_color = False
         """True if color output is disabled"""
 
-        self.csound_found = False
-
-        self.ignore_csound = False
-        """If True, no checks depending on a csound installation are performed"""
-
-        self.csound_error: str | None = None
+        self.csound_error: str = ''
         """Error message if csound/libcsound could not be found"""
 
+        self._csound_version_tuple: tuple[int, int] | None = None
+
+    def csound_found(self) -> bool:
+        _ = self.csound_version_tuple  # force calculation
+        return not bool(self.csound_error)
+
+    @staticmethod
+    def _get_csound_version_tuple() -> tuple[int, int, str]:
         try:
             major, minor = _csoundlib_version()
-            self.csound_found = True
+            return major, minor, ''
         except (OSError, ImportError) as e:
-            self.csound_error = f"csound (libcsound) not found: {e}"
-            # Allow risset to manage plugins even in the absence of a csound installation
-            major, minor = 7, 0
-            # When --ignore-csound is given the message is logged via _debug
-            # (only shown with --debug), otherwise it is printed here as before
-            if '--ignore-csound' not in sys.argv:
-                print(self.csound_error, file=sys.stderr)
+            # assume major version 7
+            return 7, 0, f"csound (libcsound) not found: {e}"
 
-        self.csound_version_tuple: tuple[int, int] = (major, minor)
-        """Csound version as (major, minor)"""
+    @property
+    def csound_version(self) -> int:
+        major, minor = self.csound_version_tuple
+        return major * 1000 + minor * 10
 
-        self.csound_version: int = major * 1000 + minor * 10
-        """Csound version id as integer, 6190 = 6.19, 7000 = 7.0"""
-
+    @property
+    def csound_version_tuple(self) -> tuple[int, int]:
+        if self._csound_version_tuple is None:
+            major, minor, errormsg = self._get_csound_version_tuple()
+            if errormsg:
+                self.csound_error = errormsg
+                _debug(errormsg)
+                _errormsg(f"Csound not installed. It can be installed via 'risset csound install'")
+            self._csound_version_tuple = (major, minor)
+            return major, minor
+        return self._csound_version_tuple
 
     def __repr__(self) -> str:
         return (f"Session(debug={self.debug}, csound_version_tuple={self.csound_version_tuple}, "
@@ -501,27 +509,31 @@ def _debug(*msgs, ljust=20) -> None:
 def _errormsg(msg: str) -> None:
     """ Print error message """
     lines = msg.splitlines()
-    print("** Error:", lines[0], file=sys.stderr)
+    print(_colorize("** Error:", 'brightred', file=sys.stderr), lines[0], file=sys.stderr)
     for line in lines[1:]:
         print("         ", line, file=sys.stderr)
 
 
 def _info(*msgs: str) -> None:
-    print(*msgs, file=sys.stderr)
+    print(_colorize(" ".join(msgs), 'cyan', file=sys.stderr), file=sys.stderr)
 
 
-def _colorize(msg: str, style: str = "") -> str:
+def _colorize(msg: str, style: str = "", file=None) -> str:
     """
-    Format `msg` with an ANSI style, if stdout is a terminal
+    Format `msg` with an ANSI style, if the output stream is a terminal
 
     `style` is an attribute string as used by `pygments.console.ansiformat`,
-    e.g. 'bold', '*red', '_blue', 'green'
+    e.g. 'bold', 'brightred', 'underline', 'green'
 
-    The message is returned unmodified if stdout is not a terminal, if
+    `file` is the stream the message will be written to (defaults to stdout).
+    The message is returned unmodified if that stream is not a terminal, if
     the NO_COLOR environment variable is set or if the --no-color
     command line flag was given
     """
-    if not style or not sys.stdout.isatty() or 'NO_COLOR' in os.environ or _session.no_color:
+    if not style or 'NO_COLOR' in os.environ or _session.no_color:
+        return msg
+    stream = file if file is not None else sys.stdout
+    if not stream.isatty():
         return msg
     from pygments.console import ansiformat
     return ansiformat(style, msg)
@@ -884,7 +896,7 @@ class Plugin:
                              if b.platform == platformid and b.matches_versionid(csound_version)]
         if not possible_binaries:
             _debug(f"Plugin '{self.name}' does not have a binary for platform '{platformid}'. "
-                   f"Found binaries for {[b.platform for b in self.binaries]}")
+                   f"Available platforms: {', '.join(b.platform for b in self.binaries)}")
             return None
         else:
             if len(possible_binaries) > 1:
@@ -1272,8 +1284,7 @@ def _find_system_plugins_path(possible_paths: list[Path], majorversion) -> Path 
     Given a list of possible paths, find the folder where the system plugins are installed
     """
     ext = _plugin_extension()
-    _debug("> Searching opcodes dir: ")
-
+    _debug("> Searching system plugins dir: ")
     if majorversion == 6:
         if sys.platform == "win32":
             dll = "arrayops.dll"
@@ -1288,21 +1299,19 @@ def _find_system_plugins_path(possible_paths: list[Path], majorversion) -> Path 
         raise ValueError(f"Expected 6 or 7, got {majorversion}")
 
     for d in possible_paths:
-        _debug(">> looking at ", d)
         path = d.expanduser().resolve()
         if not path.is_dir() or not path.exists():
-            _debug(">>> path does not exist...")
+            _debug(">> searched", d, "path does not exist...")
             continue
         plugins = list(path.glob("*" + ext))
         if not plugins:
-            _debug(f">>> path {d} exists, but has no plugins, skipping")
+            _debug(f">> path {d} exists, but has no plugins, skipping")
         elif any(plugin for plugin in plugins if dll == plugin.name):
-            _debug(">>> Found!")
+            _debug(">> Found opcodes dir:", d)
             return path
         else:
-            _debug(f">>> Path exists, but it does not seem to be the systems plugin path\n"
-                   f">>> ({dll} was not found there)")
-            _debug(">>> Plugins found here: ", ', '.join(plugin.name for plugin in plugins))
+            _debug(f">> Path {d} exists, but has no system plugins\n"
+                   f"   Plugins found here: {', '.join(plugin.name for plugin in plugins)}")
     return None
 
 
@@ -1449,7 +1458,7 @@ def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
             _errormsg(f"{pluginname}: Parsing 'binaries' key, expected a dict, got")
             raise SchemaError(f"Parsing 'binaries', Expected a dict, got {binarydef}")
         try:
-            _debug(f"Parsing binary definition for {pluginname}: {binarydef}")
+            # _debug(f"Parsing binary definition for {pluginname}: {binarydef}")
             binary = _parse_binarydef(binarydef, substitutions=substitutions)
             binaries.append(binary)
         except ParseError as e:
@@ -1570,15 +1579,13 @@ def _read_plugindef(filepath: str | Path,
 
     assert path.suffix == ".json", "Plugin definition file should be a .json file"
 
-    _debug("Parsing manifest:", path)
-
     try:
         d = json.load(open(path))
     except json.decoder.JSONDecodeError as e:
         _errormsg(f"Could not parse json file {path}:\n    {e}")
         raise e
 
-    _debug("... manifest json ok")
+    _debug(f"... {path}: manifest json ok")
 
     try:
         plugin = _plugin_from_dict(d, pluginurl=url, subpath=manifest_relative_path)
@@ -1777,10 +1784,12 @@ def system_plugins_path(majorversion: int | None = None) -> Path | None:
     if majorversion is None:
         majorversion = _session.csound_version_tuple[0]
     elif majorversion != _session.csound_version_tuple[0]:
-        _debug(f"Queryng system plugin path for csound version {majorversion}, but "
+        _debug(f"Queried system plugin path for csound version {majorversion}, but "
                f"csound's version is {_session.csound_version}")
-    assert majorversion is not None
+    if majorversion == 0:  # csound not found
+        return None
     if (out := _session.cache.get(f'system_plugins_path_{majorversion}', _UNSET)) is _UNSET:
+        assert majorversion in (6, 7)
         _session.cache[f'system_plugins_path_{majorversion}'] = out = _system_plugins_path(majorversion=majorversion)
     return out
 
@@ -1802,10 +1811,9 @@ def _envvar_opcodedir(majorversion: int) -> tuple[str | None, str]:
     return value, varname
 
 
-def _system_plugins_path(majorversion: int) -> Path | None:
-    if not majorversion:
-        majorversion = _session.csound_version_tuple[0]
-    assert majorversion in (6, 7)
+def _system_plugins_path(majorversion: int = 7) -> Path | None:
+    if majorversion == 0:
+        return None
     opcodedir, varname = _envvar_opcodedir(majorversion=majorversion)
     if opcodedir:
         _debug(f"Env variable {varname}, set to {opcodedir}")
@@ -1872,14 +1880,6 @@ class MainIndex:
         csound_installed = _session.csound_found
         if major_version is None:
             major, minor = _session.csound_version_tuple
-            # try:
-            #     major, minor = _csoundlib_version()
-            # except (ImportError, OSError) as e:
-            #     _debug(f"csound (libcsound) not found: {e}, assuming csound 7")
-            #     major, minor = 7, 0
-            #     csound_installed = False
-            #
-            # assert major == 6 or major == 7
             major_version = major
 
         if data_repo is None:
@@ -1968,7 +1968,6 @@ class MainIndex:
         if self.pluginsources:
             for name, pluginsource in self.pluginsources.items():
                 try:
-                    _debug(f"Parsing plugin definition for {name}")
                     plugin = self._parse_plugin(name)
                     self.plugins[name.lower()] = plugin
                 except Exception as e:
@@ -2076,10 +2075,10 @@ class MainIndex:
             path, userinstalled = dlldb[binary]
             return path, userinstalled
         else:
-            _debug(f"The binary {binary} could not be found in the installed dlls. Installed dlls:")
-            if _session.debug:
-                for dll, (path, userinstalled) in dlldb.items():
-                    print(f" - {dll.ljust(28)}: {path} ", file=sys.stderr)
+            # _debug(f"The binary {binary} could not be found in the installed dlls. Installed dlls:")
+            # if _session.debug:
+            #     for dll, (path, userinstalled) in dlldb.items():
+            #         print(f" - {dll.ljust(28)}: {path} ", file=sys.stderr)
             return None, False
 
     def installed_manifests_path(self) -> Path:
@@ -2159,7 +2158,7 @@ class MainIndex:
         if dll is None:
             _debug(f"installed path for dll '{binfile}' was not found")
             return False
-        if not check or _session.ignore_csound:
+        if not check:
             return True
         return self._is_plugin_recognized_by_csound(plugin)
 
@@ -2212,11 +2211,10 @@ class MainIndex:
         """
         Returns an InstalledPluginInfo if found, None otherwise
         """
-        _debug(f"Checking if plugin {plugin.name} is installed")
         binary = plugin.find_binary()
         if not binary:
-            _debug(f"Plugin {plugin.name} has no binary for this platform and/or csound version"
-                   f". Binaries: {plugin.binaries}")
+            # _debug(f"Plugin {plugin.name} has no binary for this platform and/or csound version"
+            #        f". Binaries: {plugin.binaries}")
             return None
         binfile = binary.binary_filename()
         dll, _ = self.installed_path_for_dll(binfile)
@@ -2661,7 +2659,6 @@ class MainIndex:
                 status = "[" + ", ".join(data) + "]"
             else:
                 status = ""
-            leftcol = f"{plugin.name} /{plugin.version}"
             descr = plugin.short_description
             if not bindef:
                 available = ', '.join(plugin.available_binaries())
@@ -2669,8 +2666,12 @@ class MainIndex:
                 extra_lines.append(_colorize(f"   Available binaries: {available}", 'yellow'))
             if oneline and len(descr) > descr_max_width:
                 descr = descr[:descr_max_width] + "…"
+            descr = _colorize(descr, 'faint')
             symbol = _colorize("*", 'green') if plugininstalled else _colorize("-", 'faint')
-            namecol = _colorize(leftcol.ljust(leftcolwidth), 'cyan' if plugininstalled else '')
+            namestyle = '*cyan*' if plugininstalled else 'bold'
+            version = f" /{plugin.version}"
+            padding = " " * max(0, leftcolwidth - len(plugin.name) - len(version))
+            namecol = f"{_colorize(plugin.name, namestyle)}{version}{padding}"
             print(f"{symbol} {namecol} | {descr} {status}")
             if extra_lines:
                 for line in extra_lines:
@@ -3442,31 +3443,33 @@ def cmd_list_installed_opcodes(plugins_index: MainIndex, args) -> str:
     return ''
 
 
-def cmd_dev(idx: MainIndex, args) -> str:
-    if args.cmd == 'opcodesxml':
-        outstr = idx.generate_opcodes_xml()
-        outfile = args.outfile or RISSET_OPCODESXML
-        if outfile == 'stdout':
-            print(outstr)
-        else:
-            open(outfile, "w").write(outstr)
-            _debug(f"Generated opcodes.xml at '{outfile}'")
-    elif args.cmd == 'codesign':
-        if _session.platform != 'macos':
-            return f"Code signing is only available for macos, not for '{_session.platform}'"
+def cmd_dev_opcodesxml(idx: MainIndex, args) -> str:
+    outstr = idx.generate_opcodes_xml()
+    outfile = args.outfile or RISSET_OPCODESXML
+    if outfile == 'stdout':
+        print(outstr)
+    else:
+        open(outfile, "w").write(outstr)
+        _debug(f"Generated opcodes.xml at '{outfile}'")
+    return ''
 
-        plugins = idx.available_plugins(installed_only=True, check=False)
-        dylibs = []
-        for plugin in plugins:
-            info = idx.installed_plugin_info(plugin)
-            assert info is not None
-            dylibs.append(info.dllpath.as_posix())
 
-        if not dylibs:
-            _debug(f"Did not find any binary to sign. Plugins: {plugins}")
-        else:
-            _debug(f"Code signing the following plugin binaries: {dylibs}")
-            macos_codesign(dylibs)
+def cmd_dev_codesign(idx: MainIndex, args) -> str:
+    if _session.platform != 'macos':
+        return f"Code signing is only available for macos, not for '{_session.platform}'"
+
+    plugins = idx.available_plugins(installed_only=True, check=False)
+    dylibs = []
+    for plugin in plugins:
+        info = idx.installed_plugin_info(plugin)
+        assert info is not None
+        dylibs.append(info.dllpath.as_posix())
+
+    if not dylibs:
+        _debug(f"Did not find any binary to sign. Plugins: {plugins}")
+    else:
+        _debug(f"Code signing the following plugin binaries: {dylibs}")
+        macos_codesign(dylibs)
 
     return ''
 
@@ -3785,15 +3788,19 @@ def main():
         parser.add_argument(flag, action="store_true", help=help)
 
     # Main parser
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent("""\
+            relevant environment variables:
+              LIBCSOUNDPATH         Path to the libcsound library used to query opcodes
+              CS_USER_PLUGINDIR     Override the directory where user plugins are installed
+              OPCODE7DIR64          Path to csound's system opcodes"""))
     flag(parser, "--debug", help="Print debug information")
-    flag(parser, "--ignore-csound", help="Do not fail or print a warning if csound is not found. "
-                                         "In this mode no checks depending on a csound installation "
-                                         "can be performed")
-    flag(parser, "--no-color", help="Disable colored output")
+    parser.add_argument("--no-color", dest="no_color", action="store_true",
+                        help="Disable colored output")
     flag(parser, "--update", help="Update the plugins data before any action")
     flag(parser, "--stop-on-error", help="Stop parsing if an error is detected")
-    parser.add_argument("--user-plugins-path", default="", help="Override the user plugins path")
+    parser.add_argument("--user-plugins-path", default="", help="Override the user plugins path, same as setting CS_USER_PLUGINDIR")
     flag(parser, "--version", help="Print version and exit")
 
     subparsers = parser.add_subparsers(dest='command')
@@ -3907,14 +3914,18 @@ def main():
     # dev: risset dev opcodesxml
     #      risset dev codesign
     dev_cmd = subparsers.add_parser("dev", help="Commands for developer use")
+    dev_subparsers = dev_cmd.add_subparsers(dest='dev_command')
 
-    dev_cmd.add_argument("--outfile", default=None,
-                         help="Set the output file for any action generating output")
-    dev_cmd.add_argument("cmd", choices=["opcodesxml", "codesign"],
-                         help="Subcommand. opcodesxml: generate xml output similar to "
-                              "opcodes.xml in the csound's manual; "
-                              "codesign: code sign all installed plugins (macos only)")
-    dev_cmd.set_defaults(func=cmd_dev)
+    dev_opcodesxml_cmd = dev_subparsers.add_parser(
+        "opcodesxml",
+        help=f"Generate xml output similar to opcodes.xml in the csound's manual. By default outputs to {RISSET_OPCODESXML}")
+    dev_opcodesxml_cmd.add_argument("--outfile", default=None,
+                                    help="Set the output file (use 'stdout' to print to stdout)")
+    dev_opcodesxml_cmd.set_defaults(func=cmd_dev_opcodesxml)
+
+    dev_codesign_cmd = dev_subparsers.add_parser(
+        "codesign", help="Code sign all installed plugins (macos only)")
+    dev_codesign_cmd.set_defaults(func=cmd_dev_codesign)
 
     # csound: manage the csound installation
     csound_cmd = subparsers.add_parser("csound", help="Manage the csound installation")
@@ -3928,11 +3939,6 @@ def main():
     _session.debug = args.debug
     _session.no_color = args.no_color
     _session.stop_on_errors = args.stop_on_error
-    _session.ignore_csound = args.ignore_csound and not _session.csound_found
-
-    if _session.csound_error and _session.ignore_csound:
-        # Only visible when --debug is given
-        _debug(_session.csound_error)
 
     if args.version:
         from importlib.metadata import version
@@ -3955,6 +3961,10 @@ def main():
             _errormsg(errormsg)
             sys.exit(-1)
         sys.exit(0)
+
+    if args.command == 'dev' and not args.dev_command:
+        dev_cmd.print_help()
+        sys.exit(-1)
 
     update = args.update or args.command == 'update'
 
