@@ -178,7 +178,7 @@ jobs:
           risset install klib else
           echo "-------------------------------"
           echo "Checking that the plugin is installed and recognized by csound"
-          csound -z1 | Select-String "dict"
+          csound -z1 | Select-String "lfnoise|dict_"
 
           csound -o test/lfnoise-linux-${{ matrix.csound-branch }}-pip.flac --format=flac test/lfnoise.csd
 
