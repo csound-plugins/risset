@@ -308,3 +308,39 @@ jobs:
         with:
           name: artifact-macos-${{ matrix.python-version }}-${{ strategy.job-index }}        
           path: artifacts/*
+
+  # This test uses risset as a module (import risset) and installs csound via
+  # libcsound, so it is limited to csound 7 (develop). It runs in a clean
+  # environment, so no csound is preinstalled.
+  testlinuxmodule:
+    name: Test risset as a module (csound7/develop)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: create venv and install risset from this repo
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: install csound 7
+        run: |
+          source .venv/bin/activate
+          python -m risset csound install
+          # make the freshly installed csound available to later steps
+          export PATH="$HOME/.local/csound:$PATH"
+          echo "$HOME/.local/csound" >> "$GITHUB_PATH"
+          echo "LIBCSOUNDPATH=$HOME/.local/csound/libcsound64.so" >> "$GITHUB_ENV"
+          echo "OPCODE7DIR64=$HOME/.local/lib/csound/7.0/plugins64" >> "$GITHUB_ENV"
+          csound --version
+
+      - name: test risset as a module
+        run: |
+          source .venv/bin/activate
+          python test/test_module.py
