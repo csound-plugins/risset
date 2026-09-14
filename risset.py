@@ -1296,6 +1296,8 @@ def _find_system_plugins_path(possible_paths: list[Path], majorversion) -> Path 
     elif majorversion == 7:
         if sys.platform == 'win32':
             dll = "arrays.dll"
+        elif sys.platform == 'darwin':
+            dll = "librtauhal.dylib"
         else:
             dll = "libarrays" + ext
     else:
