@@ -20,6 +20,7 @@ from pathlib import Path
 
 import risset
 
+risset._session.debug = True
 
 def render_lfnoise() -> int:
     """
