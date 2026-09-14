@@ -3395,12 +3395,10 @@ def cmd_csound_install(args) -> str:
 
     If csound is already installed the installation is skipped, unless
     ``--force`` is given.
-    """
-    if _session.platform == 'windows':
-        _info("Automatic installation of csound is not available on Windows.")
-        _info("Please install csound manually from https://csound.com/download.html")
-        return ''
 
+    On Windows the installer needs Administrator rights (it installs
+    machine-wide), so it should be run from an elevated session.
+    """
     try:
         _csoundlib_version()
         alreadyinstalled = True

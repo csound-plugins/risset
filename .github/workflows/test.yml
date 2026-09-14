@@ -312,9 +312,13 @@ jobs:
   # This test uses risset as a module (import risset) and installs csound via
   # libcsound, so it is limited to csound 7 (develop). It runs in a clean
   # environment, so no csound is preinstalled.
-  testlinuxmodule:
-    name: Test risset as a module (csound7/develop)
-    runs-on: ubuntu-latest
+  testmodule:
+    name: Test risset as a module (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v3
 
@@ -323,24 +327,37 @@ jobs:
           python-version: "3.12"
 
       - name: create venv and install risset from this repo
+        shell: bash
         run: |
           python -m venv .venv
-          source .venv/bin/activate
+          source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate
           python -m pip install --upgrade pip
           python -m pip install .
 
       - name: install csound 7
+        shell: bash
         run: |
-          source .venv/bin/activate
+          source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate
           python -m risset csound install
-          # make the freshly installed csound available to later steps
-          export PATH="$HOME/.local/csound:$PATH"
-          echo "$HOME/.local/csound" >> "$GITHUB_PATH"
-          echo "LIBCSOUNDPATH=$HOME/.local/csound/libcsound64.so" >> "$GITHUB_ENV"
-          echo "OPCODE7DIR64=$HOME/.local/lib/csound/7.0/plugins64" >> "$GITHUB_ENV"
-          csound --version
+
+      - name: make the freshly installed csound available to later steps
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            echo "$HOME/.local/csound" >> "$GITHUB_PATH"
+            echo "LIBCSOUNDPATH=$HOME/.local/csound/libcsound64.so" >> "$GITHUB_ENV"
+            echo "OPCODE7DIR64=$HOME/.local/lib/csound/7.0/plugins64" >> "$GITHUB_ENV"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            echo "LIBCSOUNDPATH=/Applications/Csound/CsoundLib64.framework/CsoundLib64" >> "$GITHUB_ENV"
+            echo "OPCODE7DIR64=/Applications/Csound/CsoundLib64.framework/Resources/Opcodes64" >> "$GITHUB_ENV"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            echo 'LIBCSOUNDPATH=C:\Program Files\Csound7\bin\csound64.dll' >> "$GITHUB_ENV"
+            echo 'OPCODE7DIR64=C:\Program Files\Csound7\plugins64' >> "$GITHUB_ENV"
+            echo 'C:\Program Files\Csound7\bin' >> "$GITHUB_PATH"
+          fi
 
       - name: test risset as a module
+        shell: bash
         run: |
-          source .venv/bin/activate
+          source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate
           python test/test_module.py
