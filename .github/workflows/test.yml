@@ -336,6 +336,11 @@ jobs:
 
       - name: install csound 7
         shell: bash
+        env:
+          # The bundled libcsound installer resolves the latest csound 7 build
+          # via the GitHub API; anonymous requests are rate-limited (HTTP 403)
+          # from shared runner IPs, so authenticate with the workflow token.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate
           python -m risset csound install
