@@ -2489,29 +2489,30 @@ class MainIndex:
 
         self._invalidate_installed()
 
+        # On macOS the plugin binaries are shipped unsigned and, on Apple
+        # Silicon, the kernel refuses to load unsigned code, so csound would
+        # never recognize the plugin. Ad-hoc code-sign the installed binary
+        # regardless of ``check``: installing must yield a usable plugin.
+        if platformid.startswith('macos'):
+            if shutil.which('codesign'):
+                _debug(f"Code-signing installed plugin '{installed_path.as_posix()}'")
+                macos_codesign([installed_path.as_posix()])
+            else:
+                _debug("The 'codesign' tool was not found, the installed plugin "
+                       "could not be code-signed")
+
         # installation succeeded, check that it works
         if not self.is_plugin_installed(plugin, check=check):
-            fixed = False
-            if platformid.startswith('macos'):
-                # try code signing the binary
-                _debug(f"The binary '{installed_path.as_posix()}' was installed but it is not recognized by csound. "
-                       f"It might be a security problem. I will try to code sign it")
-                macos_codesign([installed_path.as_posix()])
-                if self._is_plugin_recognized_by_csound(plugin):
-                    _debug("... Ok, that worked. ")
-                    fixed = True
-                else:
+            if not check:
+                return ErrorMsg(f"Tried to install plugin {plugin.name}, but the binary"
+                                f" is not present.")
+            else:
+                if platformid.startswith('macos'):
                     _errormsg(f"The plugin '{plugin.name}' was not recognized. The reason might be that the binary"
                               f" needs to be code-signed. ")
-
-            if not fixed:
-                if not check:
-                    return ErrorMsg(f"Tried to install plugin {plugin.name}, but the binary"
-                                    f" is not present.")
-                else:
-                    return ErrorMsg(f"Tried to install plugin {plugin.name}, but opcode "
-                                    f"{plugin.opcodes[0]}, which is provided by this plugin, "
-                                    f"is not present")
+                return ErrorMsg(f"Tried to install plugin {plugin.name}, but opcode "
+                                f"{plugin.opcodes[0]}, which is provided by this plugin, "
+                                f"is not present")
 
         # Install assets, if any
         assetfiles = []
