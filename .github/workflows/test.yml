@@ -16,6 +16,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: run pure-python tests
+        run: python test/test_version_range.py
+
       - name: install csound 6
         if: matrix.csound-branch == 'csound6'
         run: |

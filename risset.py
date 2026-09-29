@@ -5,15 +5,19 @@ from __future__ import annotations
 import importlib.metadata
 import sys
 
-if (sys.version_info.major, sys.version_info.minor) < (3, 9):
-    print("Python 3.9 or higher is needed", file=sys.stderr)
-    sys.exit(-1)
+if (sys.version_info.major, sys.version_info.minor) < (3, 12):
+    print("Python 3.12 or higher is needed", file=sys.stderr)
+    sys.exit(1)
 
 if len(sys.argv) >= 2 and (sys.argv[1] == "--version" or sys.argv[1] == "-v"):
-    print(importlib.metadata.version("risset"))
+    try:
+        print(importlib.metadata.version("risset"))
+    except importlib.metadata.PackageNotFoundError:
+        print("risset (version unknown, package metadata not found)", file=sys.stderr)
     sys.exit(0)
 
 import argparse
+import atexit
 import fnmatch
 import glob
 import inspect as _inspect
@@ -65,14 +69,17 @@ def _data_dir_for_platform() -> Path:
     if platform == 'linux':
         if 'FLATPAK_ID' in os.environ:
             xdghome = os.environ.get("XDG_DATA_HOME")
-            assert xdghome
+            if not xdghome:
+                raise OSError("FLATPAK_ID is set but XDG_DATA_HOME is not defined")
             return Path(xdghome)
         return Path("~/.local/share").expanduser()
     elif platform == 'darwin':
         return Path("~/Library/Application Support").expanduser()
     elif platform == 'win32':
-        p = R"C:\Users\$USERNAME\AppData\Local"
-        return Path(os.path.expandvars(p))
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if localappdata:
+            return Path(localappdata)
+        return Path.home() / "AppData" / "Local"
     else:
         raise PlatformNotSupportedError(f"Platform unknown: {platform}")
 
@@ -168,7 +175,6 @@ def _normalize_platform(s: str) -> str:
         the normalized platform or an empty string if the given
         value is not a valid platform
 
-    Raises ValueError if the platform is not supported
     """
     if s in ('windows', 'linux'):
         s += '-x86_64'
@@ -187,20 +193,18 @@ def _platform_architecture() -> str:
     """
     machine = platform.machine().lower()
     bits, linkage = platform.architecture()
-    if machine == 'arm':
+    if machine in ('arm64', 'aarch64'):
+        return 'arm64'
+    if machine.startswith(('armv7', 'armv6')) or machine in ('arm', 'arm32'):
         if bits == '64bit':
             return 'arm64'
-        elif bits == '32bit':
-            return 'arm32'
-    elif machine == 'arm64':
-        return 'arm64'
-    elif machine == 'x86_64' or machine.startswith('amd64') or machine.startswith('intel64'):
+        return 'arm32'
+    if machine in ('x86_64', 'amd64', 'intel64', 'x64', 'em64t'):
         return 'x86_64'
-    elif machine == 'i386':
+    if machine in ('i386', 'i486', 'i586', 'i686', 'x86'):
         if bits == '64bit':
             return 'x86_64'
-        elif bits == '32bit':
-            return 'x86'
+        return 'x86'
 
     raise RuntimeError(f"** Architecture not supported (machine='{machine}', {bits=}, {linkage=})")
 
@@ -258,7 +262,7 @@ def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
         try:
             dll = ctypes.CDLL(libcsoundpath)
             dll.csoundGetVersion.restype = ctypes.c_int32
-            versionid = dll.CsoundGetVersion()
+            versionid = dll.csoundGetVersion()
         except OSError as e:
             raise OSError(f"Could not load libcsound from '{libcsoundpath}': {e}")
     else:
@@ -289,11 +293,14 @@ class _Session:
     def __init__(self, debug=False):
         self.downloaded_files: dict[str, Path] = {}
         self.cloned_repos: dict[str, Path] = {}
-        self.platform: str = {
-            'linux': 'linux',
-            'darwin': 'macos',
-            'win32': 'windows'
-        }[sys.platform]
+        try:
+            self.platform: str = {
+                'linux': 'linux',
+                'darwin': 'macos',
+                'win32': 'windows'
+            }[sys.platform]
+        except KeyError:
+            raise PlatformNotSupportedError(f"Platform not supported: {sys.platform}")
 
         self.architecture = _platform_architecture()
         """The current architecture"""
@@ -314,6 +321,33 @@ class _Session:
         """Error message if csound/libcsound could not be found"""
 
         self._csound_version_tuple: tuple[int, int] | None = None
+
+        self._csound_error_reported = False
+        """True once the 'csound not installed' message has been printed"""
+
+        self._temp_root: Path | None = None
+        """Process-wide temporary folder for extracted artifacts (created lazily)"""
+
+    def temp_root(self) -> Path:
+        """
+        Return a process-wide temporary folder for extracted artifacts.
+
+        The folder is created lazily and removed at interpreter exit. When
+        running with --debug it is kept so that the extracted files can be
+        inspected.
+        """
+        if self._temp_root is None:
+            root = Path(tempfile.mkdtemp(prefix="risset-tmp-"))
+            self._temp_root = root
+
+            def _cleanup(path: Path = root) -> None:
+                if self.debug:
+                    _debug(f"Keeping temporary folder for inspection: {path}")
+                    return
+                _rm_dir(path)
+
+            atexit.register(_cleanup)
+        return self._temp_root
 
     def csound_found(self) -> bool:
         """
@@ -343,8 +377,17 @@ class _Session:
             if errormsg:
                 self.csound_error = errormsg
                 _debug(errormsg)
-                _errormsg(f"Csound not installed. It can be installed via 'risset csound install'")
+                # Surface the problem once, even without --debug: the version
+                # is queried repeatedly, so do not spam the user.
+                if not self._csound_error_reported:
+                    _errormsg("Csound not installed. It can be installed via 'risset csound install'")
+                    self._csound_error_reported = True
+                # Do not cache the fallback so a later install in the same
+                # process is picked up on retry
+                return (major, minor)
             self._csound_version_tuple = (major, minor)
+            self.csound_error = ''
+            self._csound_error_reported = False
             return major, minor
         return self._csound_version_tuple
 
@@ -372,8 +415,10 @@ class _VersionRange:
     includemax: bool = False
 
     def __post_init__(self):
-        assert isinstance(self.minversion, int) and self.minversion >= 6000, f"Got {self.minversion}"
-        assert isinstance(self.maxversion, int) and self.maxversion >= 6000, f"Got {self.maxversion}"
+        if not isinstance(self.minversion, int) or self.minversion < 6000:
+            raise ValueError(f"Invalid minversion: {self.minversion}")
+        if not isinstance(self.maxversion, int) or self.maxversion < 6000:
+            raise ValueError(f"Invalid maxversion: {self.maxversion}")
 
     def contains(self, versionid: int) -> bool:
         """
@@ -415,15 +460,19 @@ def _termsize(width=80, height=25) -> tuple[int, int]:
 
 
 def _version_to_versionid(versionstr: str) -> int:
-    if '.' not in versionstr:
-        return int(versionstr)
-    majors, minors = versionstr.split('.', maxsplit=1)
-    patch = 0
-    if '.' in minors:
-        minors, patchs = minors.split('.', maxsplit=1)
-        patch = int(patchs)
-        assert 0 <= patch < 10
-    versionid = int(majors) * 1000 + int(minors) * 10 + patch
+    try:
+        if '.' not in versionstr:
+            return int(versionstr)
+        majors, minors = versionstr.split('.', maxsplit=1)
+        patch = 0
+        if '.' in minors:
+            minors, patchs = minors.split('.', maxsplit=1)
+            patch = int(patchs)
+            if not 0 <= patch < 10:
+                raise ValueError(f"Could not parse version '{versionstr}': patch out of range")
+        versionid = int(majors) * 1000 + int(minors) * 10 + patch
+    except ValueError:
+        raise ParseError(f"Could not parse version '{versionstr}'")
     return versionid
 
 
@@ -439,19 +488,18 @@ def _parse_version(versionstr: str) -> _VersionRange:
     if len(parts) % 2 != 0:
         raise ParseError(f"Could not parse version range: {versionstr}, parts: {parts}")
     minversion = 6000
-    maxversion = 9999
-    includemax = False
+    maxversion = 99999
+    includemax = True
     includemin = False
     for op, version in zip(parts[::2], parts[1::2]):
-        assert op in ('<', '>', '<=', '>=')
+        if op not in ('<', '>', '<=', '>='):
+            raise ParseError(f"Could not parse version range: {versionstr}, operator {op} not supported")
         if op[0] == '<':
             maxversion = _version_to_versionid(version)
-            if op[-1] == '=':
-                includemax = True
+            includemax = op[-1] == '='
         elif op[0] == '>':
             minversion = _version_to_versionid(version)
-            if op[-1] == '=':
-                includemin = True
+            includemin = op[-1] == '='
         else:
             raise ParseError(f"Could not parse version range: {versionstr}, operator {op} not supported")
     return _VersionRange(minversion=minversion, maxversion=maxversion, includemin=includemin, includemax=includemax)
@@ -459,7 +507,8 @@ def _parse_version(versionstr: str) -> _VersionRange:
 
 def _abbrev(s: str, maxlen: int) -> str:
     """Abbreviate string"""
-    assert maxlen > 18
+    if maxlen <= 18:
+        raise ValueError(f"maxlen must be > 18, got {maxlen}")
     lens = len(s)
     if lens < maxlen:
         return s
@@ -474,7 +523,11 @@ def _is_git_repo(path: str | Path) -> bool:
     # via https://remarkablemark.org/blog/2020/06/05/check-git-repository/
     if isinstance(path, Path):
         path = path.as_posix()
-    out = subprocess.check_output(["git", "-C", path, "rev-parse", "--is-inside-work-tree"]).decode("utf-8").strip()
+    try:
+        out = subprocess.check_output(["git", "-C", path, "rev-parse", "--is-inside-work-tree"],
+                                      stderr=subprocess.DEVNULL).decode("utf-8").strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return False
     return out == "true"
 
 
@@ -577,7 +630,8 @@ class Asset:
     name: str = ''
 
     def __post_init__(self):
-        assert self.source
+        if not self.source:
+            raise ValueError("Asset source is empty")
 
     def identifier(self) -> str:
         if self.name:
@@ -587,7 +641,8 @@ class Asset:
         return self.source
 
     def local_path(self) -> Path:
-        assert self.source
+        if not self.source:
+            raise ValueError("Asset source is empty")
         if _is_url(self.source):
             if _is_git_url(self.source):
                 return _git_local_path(self.source)
@@ -597,7 +652,8 @@ class Asset:
         else:
             # it is a path, check that it exists
             source = Path(self.source)
-            assert source.exists(), f"Assert source does not exist: {source}"
+            if not source.exists():
+                raise OSError(f"Asset source does not exist: {source}")
             return source
 
     def retrieve(self) -> list[Path]:
@@ -610,17 +666,25 @@ class Asset:
             files are extracted to a temp dir and a path to that temp dir
             is returned
         """
-        assert self.source and (_is_url(self.source) or os.path.isabs(self.source)), \
-            f"Source should be either a url or an absolute path: {self.source}"
+        if not self.source or (not _is_url(self.source) and not os.path.isabs(self.source)):
+            raise ValueError(f"Source should be either a url or an absolute path: {self.source}")
         # self.url is either a git repo or a url pointing to a file
         root = self.local_path()
         if root.is_dir():
-            assert _is_git_repo(root)
+            if not _is_git_repo(root):
+                raise RuntimeError(f"Asset source dir is not a git repository: {root}")
             _git_update(root)
             collected_assets: list[Path] = []
+            rootresolved = root.resolve()
             for pattern in self.patterns:
-                matchedfiles = glob.glob((root/pattern).as_posix())
-                collected_assets.extend(Path(m) for m in matchedfiles)
+                if not pattern or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+                    raise ValueError(f"Refusing absolute/escaping asset pattern: {pattern!r}")
+                matchedfiles = glob.glob((root / pattern).as_posix())
+                for m in matchedfiles:
+                    resolved = Path(m).resolve()
+                    if not resolved.is_relative_to(rootresolved):
+                        raise RuntimeError(f"Asset pattern {pattern!r} escapes the repository")
+                    collected_assets.append(Path(m))
             return collected_assets
         elif root.suffix == '.zip':
             _debug(f"Extracting {self.patterns} from {root}")
@@ -691,7 +755,8 @@ class Binary:
         Returns:
             True if the versionid is contained within the version range of this binary
         """
-        assert isinstance(versionid, int) and versionid >= 6000, f"Got {versionid}"
+        if not isinstance(versionid, int) or versionid < 6000:
+            raise ValueError(f"Invalid versionid: {versionid}")
         return self.csound_version_range().contains(versionid)
 
     def binary_filename(self) -> str:
@@ -701,7 +766,8 @@ class Binary:
         if not self.url.endswith('.zip'):
             return os.path.split(self.url)[1]
         else:
-            assert self.extractpath
+            if not self.extractpath:
+                raise ValueError("zip binary is missing 'extractpath'")
             return os.path.split(self.extractpath)[1]
 
 
@@ -730,10 +796,12 @@ class IndexItem:
 
     def manifest_path(self) -> Path:
         localpath = _git_local_path(self.url)
-        assert localpath.exists()
+        if not localpath.exists():
+            raise RuntimeError(f"Cloned repository for {self.name} not found at {localpath}")
         manifest_path = localpath / self.path
         if manifest_path.is_file():
-            assert manifest_path.suffix == ".json"
+            if manifest_path.suffix != ".json":
+                raise SchemaError(f"Manifest for {self.name} should be a .json file: {manifest_path}")
         else:
             manifest_path = manifest_path / "risset.json"
         if not manifest_path.exists():
@@ -755,7 +823,8 @@ class IndexItem:
         Raises: PluginDefinitionError if there is an error
         """
         manifest = self.manifest_path()
-        assert manifest.exists() and manifest.suffix == '.json'
+        if not (manifest.exists() and manifest.suffix == '.json'):
+            raise SchemaError(f"Invalid manifest path for {self.name}: {manifest}")
         try:
             plugin = _read_plugindef(manifest.as_posix(), url=self.url,
                                      manifest_relative_path=self.path)
@@ -818,9 +887,12 @@ class Plugin:
     assets: list[Asset] | None = None
 
     def __post_init__(self):
-        assert isinstance(self.binaries, list) and all(isinstance(b, Binary) for b in self.binaries)
-        assert isinstance(self.opcodes, list)
-        assert not self.assets or isinstance(self.assets, list)
+        if not isinstance(self.binaries, list) or not all(isinstance(b, Binary) for b in self.binaries):
+            raise TypeError("Plugin.binaries should be a list of Binary")
+        if not isinstance(self.opcodes, list):
+            raise TypeError("Plugin.opcodes should be a list")
+        if self.assets is not None and not isinstance(self.assets, list):
+            raise TypeError("Plugin.assets should be a list or None")
 
     def __hash__(self):
         return hash((self.name, self.version))
@@ -889,11 +961,18 @@ class Plugin:
 
         if not csound_version:
             csound_version = _session.csound_version
-        else:
-            assert isinstance(csound_version, int) and csound_version >= 6000, f"Got {csound_version}"
+        elif not isinstance(csound_version, int) or csound_version < 6000:
+            raise ValueError(f"Invalid csound_version: {csound_version}")
 
         if not platformid:
             platformid = _session.platformid
+        else:
+            normalized = _normalize_platform(platformid)
+            if not normalized:
+                _errormsg(f"Platform '{platformid}' is not supported. "
+                          f"Supported platforms: {', '.join(sorted(_supported_platforms))}")
+                return None
+            platformid = normalized
 
         possible_binaries = [b for b in self.binaries
                              if b.platform == platformid and b.matches_versionid(csound_version)]
@@ -987,30 +1066,54 @@ def user_plugins_path(version: int | tuple[int, int] | None = None) -> Path:
     if cs_user_plugindir is not None:
         return Path(cs_user_plugindir)
     key = f'user_plugins_path_{major}.{minor}'
-    if path := _session.cache.get(key):
-        assert isinstance(path, Path)
-        return path
-    else:
-        if sys.platform == 'linux':
-            if "FLATPAK_ID" in os.environ:
-                xdgdata = os.getenv("XDG_DATA_HOME")
-                assert xdgdata is not None
-                pluginsdir = Path(xdgdata) / f"csound/{major}.{minor}/plugins64"
-            else:
-                pluginsdir = f'$HOME/.local/lib/csound/{major}.{minor}/plugins64'
-        elif sys.platform == 'win32':
-            pluginsdir = f'C:\\Users\\$USERNAME\\AppData\\Local\\csound\\{major}.{minor}\\plugins64'
-        elif sys.platform == 'darwin':
-            pluginsdir = f'$HOME/Library/csound/{major}.{minor}/plugins64'
+    cached = _session.cache.get(key)
+    if isinstance(cached, Path):
+        return cached
+    if sys.platform == 'linux':
+        if "FLATPAK_ID" in os.environ:
+            xdgdata = os.getenv("XDG_DATA_HOME")
+            if not xdgdata:
+                raise OSError("FLATPAK_ID is set but XDG_DATA_HOME is not defined")
+            pluginsdir = Path(xdgdata) / f"csound/{major}.{minor}/plugins64"
         else:
-            raise RuntimeError(f"Platform not supported: {sys.platform}")
-        out = Path(os.path.expandvars(pluginsdir))
-        _session.cache[key] = out
-        return out
+            pluginsdir = f'$HOME/.local/lib/csound/{major}.{minor}/plugins64'
+    elif sys.platform == 'win32':
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if localappdata:
+            pluginsdir = str(Path(localappdata) / "csound" / f"{major}.{minor}" / "plugins64")
+        else:
+            pluginsdir = str(Path.home() / "AppData" / "Local" / "csound" / f"{major}.{minor}" / "plugins64")
+    elif sys.platform == 'darwin':
+        pluginsdir = f'$HOME/Library/csound/{major}.{minor}/plugins64'
+    else:
+        raise RuntimeError(f"Platform not supported: {sys.platform}")
+    out = Path(os.path.expandvars(pluginsdir))
+    _session.cache[key] = out
+    return out
 
 
 def _is_glob(s: str) -> bool:
-    return "*" in s or "?" in s
+    return glob.has_magic(s)
+
+
+def _zip_member_is_safe(name: str) -> bool:
+    """Reject absolute paths, drive letters and '..' escapes (ZipSlip)"""
+    p = Path(name)
+    if p.is_absolute() or p.drive:
+        return False
+    if ".." in p.parts:
+        return False
+    return True
+
+
+def _zip_safe_extract(z, name: str, outfolder: Path) -> Path:
+    if not _zip_member_is_safe(name):
+        raise RuntimeError(f"Refusing to extract unsafe zip entry: {name!r}")
+    # ZipInfo.is_dir() exists on 3.6+; fall back to trailing slash check
+    target = (outfolder / name).resolve()
+    if not target.is_relative_to(outfolder.resolve()):
+        raise RuntimeError(f"Refusing to extract zip entry outside destination: {name!r}")
+    return Path(z.extract(name, path=outfolder.as_posix()))
 
 
 def _zip_extract_folder(zipfile: Path,
@@ -1018,24 +1121,27 @@ def _zip_extract_folder(zipfile: Path,
                         cleanup=True,
                         destroot: Path | None = None
                         ) -> Path:
+    if not _zip_member_is_safe(folder):
+        raise RuntimeError(f"Refusing to extract unsafe zip folder: {folder!r}")
     foldername = os.path.split(folder)[1]
-    root = Path(tempfile.mktemp())
-    root.mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix="risset-zip-", dir=_session.temp_root()))
     from zipfile import ZipFile
-    z = ZipFile(zipfile, 'r')
-    pattern = folder + '/*'
-    extracted = [z.extract(name, root) for name in z.namelist()
-                 if fnmatch.fnmatch(name, pattern)]
+    with ZipFile(zipfile, 'r') as z:
+        pattern = folder + '/*'
+        extracted = [_zip_safe_extract(z, name, root) for name in z.namelist()
+                     if fnmatch.fnmatch(name, pattern)]
     _debug(f"_zip_extract_folder: Extracted files from folder {folder}: {extracted}")
     if destroot is None:
-        destroot = Path(tempfile.gettempdir())
+        destroot = Path(tempfile.mkdtemp(prefix="risset-extract-", dir=_session.temp_root()))
+    else:
+        destroot.mkdir(parents=True, exist_ok=True)
     destfolder = destroot / foldername
     if destfolder.exists():
         _debug(f"_zip_extract_folder: Destination folder {destfolder} already exists, removing")
         _rm_dir(destfolder)
-    assert destroot is not None
-    shutil.move(root / folder, destroot)
-    assert destfolder.exists() and destfolder.is_dir()
+    shutil.move((root / folder).as_posix(), destfolder.as_posix())
+    if not (destfolder.exists() and destfolder.is_dir()):
+        raise RuntimeError(f"Failed to extract folder '{folder}' from '{zipfile}'")
     if cleanup:
         _rm_dir(root)
     return destfolder
@@ -1054,26 +1160,28 @@ def _zip_extract(zipfile: Path, patterns: list[str]) -> list[Path]:
         more output files than number of patterns. Otherwise there is a 1 to 1
         relationship between input and output
     """
-    outfolder = Path(tempfile.gettempdir())
+    outfolder = Path(tempfile.mkdtemp(prefix="risset-extract-", dir=_session.temp_root()))
     from zipfile import ZipFile
-    z = ZipFile(zipfile, 'r')
-    out: list[Path] = []
-    zipped = z.namelist()
-    _debug(f"Inspecting zipfile {zipfile}, contents: {zipped}")
-    for pattern in patterns:
-        if _is_glob(pattern):
-            _debug(f"Matching names against pattern {pattern}")
-            for name in zipped:
-                if name.endswith("/") and fnmatch.fnmatch(name[:-1], pattern):
-                    # a folder
-                    out.append(_zip_extract_folder(zipfile, name[:-1]))
-                elif fnmatch.fnmatch(name, pattern):
-                    _debug(f"   Name {name} matches!")
-                    out.append(Path(z.extract(name, path=outfolder.as_posix())))
-                else:
-                    _debug(f"   Name {name} does not match")
-        else:
-            out.append(Path(z.extract(pattern, path=outfolder)))
+    with ZipFile(zipfile, 'r') as z:
+        out: list[Path] = []
+        zipped = z.namelist()
+        _debug(f"Inspecting zipfile {zipfile}, contents: {zipped}")
+        for pattern in patterns:
+            if _is_glob(pattern):
+                _debug(f"Matching names against pattern {pattern}")
+                for name in zipped:
+                    if name.endswith("/") and fnmatch.fnmatch(name[:-1], pattern):
+                        # a folder
+                        out.append(_zip_extract_folder(zipfile, name[:-1], destroot=outfolder))
+                    elif fnmatch.fnmatch(name, pattern):
+                        _debug(f"   Name {name} matches!")
+                        out.append(_zip_safe_extract(z, name, outfolder))
+                    else:
+                        _debug(f"   Name {name} does not match")
+            else:
+                if pattern not in zipped:
+                    raise KeyError(f"{pattern!r} not found in {zipfile}")
+                out.append(_zip_safe_extract(z, pattern, outfolder))
     return out
 
 
@@ -1140,11 +1248,14 @@ def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', varian
 
 
 def _plugin_extension() -> str:
-    return {
-        'linux': '.so',
-        'darwin': '.dylib',
-        'win32': '.dll'
-    }[sys.platform]
+    try:
+        return {
+            'linux': '.so',
+            'darwin': '.dylib',
+            'win32': '.dll'
+        }[sys.platform]
+    except KeyError:
+        raise PlatformNotSupportedError(f"Platform not supported: {sys.platform}")
 
 
 def _get_path_separator() -> str:
@@ -1181,12 +1292,14 @@ def _git_local_path(repo: str, update=False) -> Path:
     """
     if repo in _session.cloned_repos:
         return _session.cloned_repos[repo]
-    assert repo and _is_git_url(repo), f"Invalid repository name: {repo}"
+    if not repo or not _is_git_url(repo):
+        raise ValueError(f"Invalid repository name: {repo}")
     _debug(f"Querying local path for repo {repo}")
     reponame = _git_reponame(repo)
     destination = RISSET_CLONES_PATH / reponame
     if destination.exists():
-        assert _is_git_repo(destination), f"Expected {destination} to be a git repository"
+        if not _is_git_repo(destination):
+            raise RuntimeError(f"Expected {destination} to be a git repository")
         _session.cloned_repos[repo] = destination
         if update:
             _git_update(destination)
@@ -1217,7 +1330,9 @@ def _git_clone_into(repo: str, destination: Path, depth=1) -> None:
     if depth > 0:
         args.extend(["--depth", str(depth)])
     args.extend([repo, str(destination)])
-    _subproc_call(args)
+    ret = _subproc_call(args)
+    if ret != 0:
+        raise RuntimeError(f"git clone of '{repo}' failed with exit code {ret}")
 
 
 def _git_repo_needs_update(repopath: Path) -> bool:
@@ -1227,14 +1342,20 @@ def _git_repo_needs_update(repopath: Path) -> bool:
     NB: for our use case, where no merges are expected, to update is just
     as fast as to check first and then act.
     """
-    cwd = os.path.abspath(os.path.curdir)
-    os.chdir(str(repopath))
     git = _get_git_binary()
-    _subproc_call([git, "fetch"])
-    headhash = subprocess.check_output([git, "rev-parse", "HEAD"]).decode('utf-8')
-    upstreamhash = subprocess.check_output([git, "rev-parse", "master@{upstream}"]).decode('utf-8')
+    try:
+        subprocess.run([git, "fetch"], cwd=str(repopath), check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        headhash = subprocess.check_output([git, "rev-parse", "HEAD"],
+                                           cwd=str(repopath)).decode('utf-8')
+        upstreamhash = subprocess.check_output([git, "rev-parse", "@{u}"],
+                                               cwd=str(repopath),
+                                               stderr=subprocess.DEVNULL).decode('utf-8')
+    except (subprocess.CalledProcessError, OSError):
+        # No upstream configured or fetch failed: assume update needed
+        # (caller will surface any pull error)
+        return True
     _debug(f"Checking hashes, head: {headhash}, upstream: {upstreamhash}")
-    os.chdir(cwd)
     return headhash != upstreamhash
 
 
@@ -1249,16 +1370,15 @@ def _git_update(repopath: Path, depth=0, check_if_needed=False) -> None:
         _debug(f"Repository {repopath} up to date")
         return
     gitbin = _get_git_binary()
-    cwd = os.path.abspath(os.path.curdir)
-    os.chdir(str(repopath))
     args = [gitbin, "pull"]
     if depth > 0:
         args.extend(['--depth', str(depth)])
     if _session.debug:
-        subprocess.call(args)
+        ret = subprocess.call(args, cwd=str(repopath))
     else:
-        subprocess.call(args, stdout=subprocess.PIPE)
-    os.chdir(cwd)
+        ret = subprocess.call(args, cwd=str(repopath), stdout=subprocess.PIPE)
+    if ret != 0:
+        raise RuntimeError(f"git pull in '{repopath}' failed with exit code {ret}")
 
 
 def _version_tuple(versionstr: str) -> tuple[int, int, int]:
@@ -1329,9 +1449,11 @@ def _load_installation_manifest(path: Path) -> dict:
 
     Raises json.JSONDecodeError if the manifest's json could not be parsed
     """
-    assert path.suffix == '.json'
+    if path.suffix != '.json':
+        raise ValueError(f"Installation manifest should be a .json file: {path}")
     try:
-        d = json.load(open(path))
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
         return d
     except json.JSONDecodeError as e:
         _errormsg(f"Could not parse manifest json: {path}")
@@ -1356,7 +1478,7 @@ def _parse_pluginkey(pluginkey: str) -> tuple[str, str]:
     Handle cases where the pluginkey has no version
     """
     if "@" in pluginkey:
-        name, version = pluginkey.split("@")
+        name, version = pluginkey.rsplit("@", maxsplit=1)
     else:
         name = pluginkey
         version = "0.0.0"
@@ -1404,7 +1526,8 @@ def _parse_binarydef(binarydef: dict, substitutions: dict[str, str]) -> Binary:
     * extractpath: if the case where the url does not point to a binary, extractpath should be used
         to indicate the location of the binary within the .zip file or within the git repository
     """
-    assert isinstance(binarydef, dict), f"dict: {binarydef}"
+    if not isinstance(binarydef, dict):
+        raise SchemaError(f"Binary definition should be a dict, got {binarydef!r}")
     platform = _enforce_key(binarydef, 'platform', str)
     normalized_platform = _normalize_platform(platform)
     if not normalized_platform:
@@ -1416,7 +1539,7 @@ def _parse_binarydef(binarydef: dict, substitutions: dict[str, str]) -> Binary:
 
     url = _expand_substitutions(url, substitutions)
     build_platform = binarydef.get('build_platform', 'unknown')
-    return Binary(platform=platform, url=url, build_platform=build_platform,
+    return Binary(platform=normalized_platform, url=url, build_platform=build_platform,
                   extractpath=binarydef.get('extractpath', ''),
                   post_install_script=binarydef.get('post_install', ''),
                   csound_version=csound_version)
@@ -1427,17 +1550,19 @@ def _parse_asset(assetdef: dict, defaultsource: str) -> Asset:
     extractpath = assetdef.get('extractpath') or assetdef.get('path')
     if not source and not extractpath:
         raise ParseError("Asset definition should have an URL or an extractpath key")
-    assert extractpath
     paths = extractpath.split(";") if extractpath else []
+    paths = [p for p in paths if p]
     return Asset(source=source, patterns=paths, platform=assetdef.get('platform', 'all'), name=assetdef.get('name', ''))
 
 
 def _enforce_key[T](d: dict, key: str, expected_type: type[T]) -> T:
-    value = d.get(key)
+    if key not in d:
+        raise SchemaError(f"dict has no {key} key")
+    value = d[key]
     if value is None:
         raise SchemaError(f"dict has no {key} key")
     if not isinstance(value, expected_type):
-        raise SchemaError(f"value should be of type {expected_type.__name__}, got {type(value).__name__}")
+        raise SchemaError(f"value for key '{key}' should be of type {expected_type.__name__}, got {type(value).__name__}")
     return value
 
 
@@ -1532,8 +1657,10 @@ def _rm_dir(path: Path) -> None:
     def remove_readonly(func, path, exc_info):
         """Clear the readonly bit and reattempt the removal"""
         # ERROR_ACCESS_DENIED = 5
-        if func not in (os.unlink, os.rmdir) or exc_info[1].winerror != 5:
-            raise exc_info[1]
+        exc = exc_info[1]
+        winerror = getattr(exc, 'winerror', None)
+        if func not in (os.unlink, os.rmdir) or winerror != 5:
+            raise exc
         os.chmod(path, stat.S_IWRITE)
         func(path)
 
@@ -1582,10 +1709,12 @@ def _read_plugindef(filepath: str | Path,
     if not path.exists():
         raise SchemaError(f"plugin definition file ({path}) not found")
 
-    assert path.suffix == ".json", "Plugin definition file should be a .json file"
+    if path.suffix != ".json":
+        raise SchemaError("Plugin definition file should be a .json file")
 
     try:
-        d = json.load(open(path))
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
     except json.decoder.JSONDecodeError as e:
         _errormsg(f"Could not parse json file {path}:\n    {e}")
         raise e
@@ -1667,6 +1796,14 @@ def _filename_from_content_disposition(cd: str) -> str:
     return fname[0]
 
 
+def _sanitize_download_filename(name: str) -> str:
+    """Strip paths/queries and allowlist chars; fall back to a generic name"""
+    name = urllib.parse.unquote(name).split("?")[0].split("#")[0]
+    name = os.path.basename(name.strip().strip('"').strip("'"))
+    name = re.sub(r'[^A-Za-z0-9._-]', '_', name).strip("._") or "download"
+    return name[:128]
+
+
 def _download_file(url: str, destination_folder='', cache=True) -> Path:
     """
     Download the given url. Raises RuntimeError if failed
@@ -1674,10 +1811,10 @@ def _download_file(url: str, destination_folder='', cache=True) -> Path:
     Args:
         url: the url to download from
         destination_folder: if given, the folder to place the downloaded file. Defaults to
-            the temporary folder. If given, cache is disabled.
+            the temporary folder.
         cache: if False, bypass the cache.
     """
-    baseoutfile = os.path.split(url)[1]
+    baseoutfile = _sanitize_download_filename(os.path.split(url)[1] or "download")
     cachedpath = _session.downloaded_files.get(url)
     if cachedpath is not None and cache:
         _debug("Found file in the cache, no need to download")
@@ -1691,15 +1828,19 @@ def _download_file(url: str, destination_folder='', cache=True) -> Path:
     _debug("Downloading url", url)
     import requests
     try:
-        resp = requests.get(url, verify=True, allow_redirects=True)
+        resp = requests.get(url, verify=True, allow_redirects=True, timeout=30)
+        resp.raise_for_status()
         contentdisp = resp.headers.get('content-disposition')
         if contentdisp is not None:
             contentdisp_filename = _filename_from_content_disposition(contentdisp)
             if contentdisp_filename:
-                baseoutfile = contentdisp_filename
+                baseoutfile = _sanitize_download_filename(contentdisp_filename)
 
     except requests.ConnectionError as err:
         _errormsg(f"Connection error while trying to download url: '{url}'")
+        raise err
+    except requests.HTTPError as err:
+        _errormsg(f"HTTP error while trying to download url: '{url}': {err}")
         raise err
     except Exception as err:
         _errormsg(f"Unknown exception while trying to download url: '{url}'")
@@ -1707,11 +1848,23 @@ def _download_file(url: str, destination_folder='', cache=True) -> Path:
 
     if not destination_folder:
         destination_folder = tempfile.gettempdir()
+    Path(destination_folder).mkdir(parents=True, exist_ok=True)
     destpath = Path(destination_folder) / baseoutfile
     _debug(f"Writing downloaded content from url '{url}' to file '{destpath}'")
-    with open(destpath, 'wb') as f:
-        f.write(resp.content)
-    _session.downloaded_files[url] = destpath
+    # Atomic write via temp file in the same folder (no hash verification yet, see TODO.md)
+    fd, tmppath = tempfile.mkstemp(dir=destination_folder, prefix="risset-dl-")
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(resp.content)
+        os.replace(tmppath, destpath)
+    except BaseException:
+        try:
+            os.unlink(tmppath)
+        except OSError:
+            pass
+        raise
+    if cache_download:
+        _session.downloaded_files[url] = destpath
     return destpath
 
 
@@ -1794,7 +1947,8 @@ def system_plugins_path(majorversion: int | None = None) -> Path | None:
     if majorversion == 0:  # csound not found
         return None
     if (out := _session.cache.get(f'system_plugins_path_{majorversion}', _UNSET)) is _UNSET:
-        assert majorversion in (6, 7)
+        if majorversion not in (6, 7):
+            raise ValueError(f"Expected major version 6 or 7, got {majorversion}")
         _session.cache[f'system_plugins_path_{majorversion}'] = out = _system_plugins_path(majorversion=majorversion)
     return out
 
@@ -1810,7 +1964,8 @@ def _envvar_opcodedir(majorversion: int) -> tuple[str | None, str]:
         a tuple (value: str | None, varname: str). We differentiate the empty
         string from None, which means that the variable is unset
     """
-    assert majorversion in (6, 7)
+    if majorversion not in (6, 7):
+        raise ValueError(f"Expected major version 6 or 7, got {majorversion}")
     varname = f"OPCODE{majorversion}DIR64"
     value = os.getenv(varname)
     return value, varname
@@ -1938,7 +2093,8 @@ class MainIndex:
         if updateindex:
             _git_update(self.datarepo)
 
-        indexstr = open(self.indexfile).read()
+        with open(self.indexfile, encoding="utf-8") as f:
+            indexstr = f.read()
         try:
             d = json.loads(indexstr)
         except json.JSONDecodeError as err:
@@ -2021,7 +2177,8 @@ class MainIndex:
             raise KeyError(f"Plugin {pluginname} not known. Known plugins: {self.pluginsources.keys()}")
         manifestpath = pluginsource.manifest_path()
         assert manifestpath.exists()
-        manifeststr = open(manifestpath).read()
+        with open(manifestpath, encoding="utf-8") as f:
+            manifeststr = f.read()
         try:
             _ = json.loads(manifeststr)
         except json.JSONDecodeError as err:
@@ -2275,7 +2432,8 @@ class MainIndex:
         Returns:
             the path of the binary.
         """
-        assert isinstance(plugin, Plugin)
+        if not isinstance(plugin, Plugin):
+            raise TypeError(f"Expected Plugin, got {type(plugin).__name__}")
         if not platformid:
             platformid = _session.platformid
         if not csound_version:
@@ -2460,7 +2618,8 @@ class MainIndex:
             >>> pluginpoly = idx.plugins['poly']
             >>> idx.install_plugin(pluginpoly)
         """
-        assert isinstance(plugin, Plugin)
+        if not isinstance(plugin, Plugin):
+            raise TypeError(f"Expected Plugin, got {type(plugin).__name__}")
         platformid = _session.platformid
         try:
             # This method will download and extract the plugin if necessary
@@ -2539,7 +2698,7 @@ class MainIndex:
             script = plugin.resolve_path(binarydef.post_install_script)
             _subproc_call(script.as_posix(), shell=True)
 
-        with open(manifest_path.as_posix(), "w") as f:
+        with open(manifest_path.as_posix(), "w", encoding="utf-8") as f:
             f.write(manifest_json)
         _debug(f"Saved manifest for plugin {plugin.name} to {manifest_path}")
 
@@ -2557,7 +2716,8 @@ class MainIndex:
         """
         d = {}
         for plugin in self.plugins.values():
-            assert isinstance(plugin, Plugin)
+            if not isinstance(plugin, Plugin):
+                raise TypeError(f"Expected Plugin, got {type(plugin).__name__}")
             info = self.installed_plugin_info(plugin)
             binary = plugin.find_binary()
             plugininstalled = info is not None
@@ -2768,19 +2928,29 @@ class MainIndex:
             raise RuntimeError(f"Plugin is installed in the system folder and needs to"
                                f" be removed manually. Path: {info.dllpath.as_posix()}")
         os.remove(info.dllpath.as_posix())
-        assert not info.dllpath.exists(), f"Attempted to remove {info.dllpath.as_posix()}, but failed"
+        if info.dllpath.exists():
+            raise RuntimeError(f"Attempted to remove {info.dllpath.as_posix()}, but failed")
         self._invalidate_installed()
         manifestpath = info.installed_manifest_path
+        if not re.fullmatch(r'[A-Za-z0-9._-]+', plugin.name):
+            raise ValueError(f"Refusing to uninstall plugin with unsafe name: {plugin.name!r}")
         assetsfolder = RISSET_ASSETS_PATH / plugin.name
         if manifestpath and manifestpath.exists():
             installed_manifest = _load_installation_manifest(manifestpath)
             assetfiles = installed_manifest.get('assetfiles', [])
             if removeassets and assetsfolder.exists():
                 _debug(f"Removing assets for plugin {plugin.name}: {assetfiles}")
+                assetsresolved = assetsfolder.resolve()
                 for assetfile in assetfiles:
-                    assetfullpath = assetsfolder / assetfile
-                    if assetfullpath.exists():
+                    if not assetfile or ".." in Path(assetfile).parts or Path(assetfile).is_absolute():
+                        raise ValueError(f"Refusing to remove escaping asset path: {assetfile!r}")
+                    assetfullpath = (assetsresolved / assetfile)
+                    if not assetfullpath.resolve().is_relative_to(assetsresolved):
+                        raise RuntimeError(f"Asset path escapes assets folder: {assetfile!r}")
+                    try:
                         os.remove(assetfullpath)
+                    except FileNotFoundError:
+                        _debug(f"Asset file already gone: {assetfullpath}")
                 remainingassets = list(assetsfolder.glob("*"))
                 if remainingassets:
                     _info(f"There are remaining assets in the folder {assetsfolder}: "
@@ -2801,13 +2971,16 @@ class MainIndex:
             a list of installed file names (only the filename, not the
             absolute path, the destination path is RISSET_ASSETS_PATH / prefix)
         """
+        if not prefix or not re.fullmatch(r'[A-Za-z0-9._-]+', prefix):
+            raise ValueError(f"Refusing to install asset under unsafe prefix: {prefix!r}")
         destination_folder = RISSET_ASSETS_PATH / prefix
         sources = asset.retrieve()
         destination_folder.mkdir(parents=True, exist_ok=True)
         for source in sources:
             _debug(f"Copying asset {source} to {destination_folder}")
             if source.is_dir():
-                shutil.copytree(source, destination_folder/source.name)
+                shutil.copytree(source, destination_folder / source.name,
+                                symlinks=False, dirs_exist_ok=True)
             else:
                 shutil.copy(source, destination_folder)
         return [f.name for f in sources]
@@ -2894,11 +3067,10 @@ def _is_package_installed(pkg: str) -> bool:
 
 
 def _call_mkdocs(folder: Path, *args: str) -> None:
-    currentdir = os.getcwd()
-    os.chdir(folder)
-    _debug(f"Rendering docs via mkdocs. Current dir: {os.getcwd()}")
-    _subproc_call([sys.executable, "-m", "mkdocs"] + list(args))
-    os.chdir(currentdir)
+    _debug(f"Rendering docs via mkdocs in {folder}")
+    ret = subprocess.call([sys.executable, "-m", "mkdocs"] + list(args), cwd=str(folder))
+    if ret != 0:
+        raise RuntimeError(f"mkdocs {' '.join(args)} failed with exit code {ret}")
 
 
 def _is_mkdocs_installed() -> bool:
@@ -2931,7 +3103,7 @@ def _generate_documentation(index: MainIndex,
 
     if opcodesxml:
         xmlstr = index.generate_opcodes_xml()
-        open(opcodesxml, "w").write(xmlstr)
+        Path(opcodesxml).write_text(xmlstr, encoding="utf-8")
 
     if buildhtml:
         if not _is_mkdocs_installed():
@@ -2976,7 +3148,8 @@ def _compile_docs(index: MainIndex, dest: Path, makeindex=True,
 
     # copy .css file
     syntaxhighlightingcss = RISSET_DATAREPO_LOCALPATH / "assets" / "syntax-highlighting.css"
-    assert syntaxhighlightingcss.exists()
+    if not syntaxhighlightingcss.exists():
+        raise OSError(f"Did not find syntax highlighting css: {syntaxhighlightingcss}")
     shutil.copy(syntaxhighlightingcss, css_folder)
 
     for plugin in index.plugins.values():
@@ -3189,7 +3362,7 @@ def _docs_generate_index(index: MainIndex, outfile: Path) -> None:
             _(f"  * [{opcode}](opcodes/{opcode}.md): {parsedmanpage.abstract}")
 
         _("")
-    with open(outfile, "w") as f:
+    with open(outfile, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
 
@@ -3209,12 +3382,14 @@ def cmd_list(mainindex: MainIndex, args) -> str:
     if args.json:
         d = mainindex.list_plugins_as_dict(installed=args.installed, all=args.all)
         if args.outfile:
-            with open(args.outfile, "w") as f:
+            with open(args.outfile, "w", encoding="utf-8") as f:
                 json.dump(d, f, indent=2)
         else:
             print(json.dumps(d, indent=2))
         return ''
     else:
+        if args.outfile:
+            _debug("list: --outfile/-o is only valid together with --json, ignoring it")
         header = True
         if args.oneline or args.nameonly or args.noheader:
             header = False
@@ -3453,7 +3628,7 @@ def cmd_dev_opcodesxml(idx: MainIndex, args) -> str:
     if outfile == 'stdout':
         print(outstr)
     else:
-        open(outfile, "w").write(outstr)
+        Path(outfile).write_text(outstr, encoding="utf-8")
         _debug(f"Generated opcodes.xml at '{outfile}'")
     return ''
 
@@ -3527,7 +3702,7 @@ def cmd_info(idx: MainIndex, args) -> str:
         d['plugins'] = idx.list_plugins_as_dict()
     jsonstr = json.dumps(d, indent=True)
     if args.outfile:
-        open(args.outfile, "w").write(jsonstr)
+        Path(args.outfile).write_text(jsonstr, encoding="utf-8")
     else:
         print(jsonstr)
     return ''
@@ -3535,6 +3710,7 @@ def cmd_info(idx: MainIndex, args) -> str:
 
 def cmd_upgrade(idx: MainIndex, args) -> str:
     """ Upgrades all installed packages if they can be upgraded """
+    errors: list[str] = []
     for plugin in idx.plugins.values():
         if not idx.is_plugin_installed(plugin):
             continue
@@ -3550,7 +3726,8 @@ def cmd_upgrade(idx: MainIndex, args) -> str:
             if err:
                 _errormsg(f"Error while installing {plugin.name}")
                 _errormsg("    " + str(err))
-    return ''
+                errors.append(f"{plugin.name}: {err}")
+    return '' if not errors else '; '.join(errors)
 
 
 def cmd_download(idx: MainIndex, args) -> str:
@@ -3765,7 +3942,7 @@ def _show_markdown_file(path: Path, style='dark') -> None:
     from pygments.lexers import MarkdownLexer
     from pygments.styles import STYLE_MAP
     # from pygments.formatters import TerminalFormatter
-    code = open(path).read()
+    code = Path(path).read_text(encoding="utf-8")
     if style == 'dark':
         style = 'fruity'
     elif style == 'light':
@@ -3782,11 +3959,13 @@ def main():
     # Preliminary checks
     if sys.platform not in ("linux", "darwin", "win32"):
         _errormsg(f"Platform not supported: {sys.platform}")
-        sys.exit(-1)
+        sys.exit(1)
 
-    if _get_git_binary() is None:
+    try:
+        _get_git_binary()
+    except RuntimeError:
         _errormsg("git command not found. Check that git is installed and in the PATH")
-        sys.exit(-1)
+        sys.exit(1)
 
     def flag(parser, flag, help=""):
         parser.add_argument(flag, action="store_true", help=help)
@@ -3818,7 +3997,6 @@ def main():
     flag(list_cmd, "--nameonly", help="Output just the name of each plugin")
     flag(list_cmd, "--installed", help="List only installed plugins")
     flag(list_cmd, "--upgradeable", help="List only installed packages which can be upgraded")
-    flag(list_cmd, "--notinstalled", help="List only plugins which are not installed")
     flag(list_cmd, "--noheader", help="Do not print any extra information")
     list_cmd.add_argument("-o", "--outfile", help="Outputs to a file")
     list_cmd.add_argument("-1", "--oneline", action="store_true", help="List each plugin in one line")
@@ -3854,19 +4032,21 @@ def main():
     # man command
     man_cmd = subparsers.add_parser("man", help="Open manual page for an installed opcode. "
                                                 "Multiple opcodes or a glob wildcard are allowed")
-    man_cmd.add_argument("-p", "--path", action="store_true",
-                         help="Only print the path of the manual page. The format is <opcode>:<path>, allowing to "
-                              "query the path for multiple opcodes")
-    man_cmd.add_argument("-s", "--simplepath", action="store_true",
-                         help="Print just the path of the manual page")
-    man_cmd.add_argument("-m", "--markdown", action="store_true",
-                         help="Use the .md page instead of the .html version")
+    pathgroup = man_cmd.add_mutually_exclusive_group()
+    pathgroup.add_argument("-p", "--path", action="store_true",
+                           help="Only print the path of the manual page. The format is <opcode>:<path>, allowing to "
+                                "query the path for multiple opcodes")
+    pathgroup.add_argument("-s", "--simplepath", action="store_true",
+                           help="Print just the path of the manual page")
+    fmtgroup = man_cmd.add_mutually_exclusive_group()
+    fmtgroup.add_argument("-m", "--markdown", action="store_true",
+                          help="Use the .md page instead of the .html version")
+    fmtgroup.add_argument("--html", action="store_true",
+                          help="Opens the .html version of the manpage in the default browser (or outputs the path"
+                               " with the --path option)")
     man_cmd.add_argument("-e", "--external", action="store_true",
                          help="Open the man page in the default app. This is only"
                               " used when opening the markdown man page.")
-    man_cmd.add_argument("--html", action="store_true",
-                         help="Opens the .html version of the manpage in the default browser (or outputs the path"
-                              " with the --path option)")
     man_cmd.add_argument("--theme", default="dark",
                          choices=['dark', 'light', 'gruvbox-dark', 'gruvbox-light', 'material', 'fruity', 'native'],
                          help="Style used when displaying markdown files (default=dark)")
@@ -3946,29 +4126,32 @@ def main():
 
     if args.version:
         from importlib.metadata import version
-        print(version("risset"))
+        try:
+            print(version("risset"))
+        except importlib.metadata.PackageNotFoundError:
+            print("risset (version unknown, package metadata not found)", file=sys.stderr)
         sys.exit(0)
 
     if not args.command:
         parser.print_help()
-        sys.exit(-1)
+        sys.exit(1)
     elif args.command == 'resetcache':
         cmd_resetcache(args)
         sys.exit(0)
     elif args.command == 'csound':
         if not args.csound_command:
             csound_cmd.print_help()
-            sys.exit(-1)
+            sys.exit(1)
         errormsg = args.func(args)
         if errormsg:
             _errormsg(f"Command csound {args.csound_command} failed")
             _errormsg(errormsg)
-            sys.exit(-1)
+            sys.exit(1)
         sys.exit(0)
 
     if args.command == 'dev' and not args.dev_command:
         dev_cmd.print_help()
-        sys.exit(-1)
+        sys.exit(1)
 
     update = args.update or args.command == 'update'
 
@@ -3981,7 +4164,7 @@ def main():
             raise e
         else:
             _errormsg(str(e))
-            sys.exit(-1)
+            sys.exit(1)
 
     if args.command == 'update':
         sys.exit(0)
@@ -3990,7 +4173,7 @@ def main():
         if errormsg:
             _errormsg(f"Command {args.command} failed")
             _errormsg(errormsg)
-            sys.exit(-1)
+            sys.exit(1)
         sys.exit(0)
 
 
