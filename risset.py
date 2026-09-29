@@ -1863,8 +1863,7 @@ def _download_file(url: str, destination_folder='', cache=True) -> Path:
         except OSError:
             pass
         raise
-    if cache_download:
-        _session.downloaded_files[url] = destpath
+    _session.downloaded_files[url] = destpath
     return destpath
 
 
