@@ -346,7 +346,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate
-          python -m risset csound install
+          python -m risset --debug csound install
 
       - name: make the freshly installed csound available to later steps
         shell: bash
