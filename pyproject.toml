@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "risset"
-version = "3.6.5"
+dynamic = ["version"]
 description = "Package manager for csound"
 authors = [
     { name = "Eduardo Moguillansky", email = "eduardo.moguillansky@gmail.com" },
@@ -33,5 +33,9 @@ risset = "risset:main"
 [tool.setuptools]
 py-modules = ["risset"]
 
+[tools.setuptools_scm]
+fallback_version = "0.0.0"
+
 [project.urls]
 "Homepage" = "https://github.com/csound-plugins/risset"
+
