@@ -33,7 +33,7 @@ risset = "risset:main"
 [tool.setuptools]
 py-modules = ["risset"]
 
-[tools.setuptools_scm]
+[tool.setuptools_scm]
 fallback_version = "0.0.0"
 
 [project.urls]
