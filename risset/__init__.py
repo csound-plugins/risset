@@ -3689,7 +3689,12 @@ def _install_completion(shell: str) -> Path:
     destdir = _completion_install_dir(shell)
     destdir.mkdir(parents=True, exist_ok=True)
     destfile = destdir / _COMPLETION_FILENAMES[shell]
-    destfile.write_text(_completion_source(shell), encoding="utf-8")
+    # A completion file may itself be a symlink (for example, into a dotfiles
+    # checkout). Ensure the resolved target's parent exists too; creating
+    # destdir alone does not help when that symlink points into a missing dir.
+    target = destfile.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_completion_source(shell), encoding="utf-8")
     return destfile
 
 
