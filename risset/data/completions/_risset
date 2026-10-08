@@ -1,0 +1,205 @@
+#compdef risset
+# zsh completion for risset
+# Place this file as _risset somewhere in your $fpath, e.g.
+#   ~/.zsh/completions/_risset
+# and add that directory to $fpath before calling compinit.
+
+_risset_plugins() {
+    local -a plugins
+    plugins=(${(f)"$(risset list --nameonly 2>/dev/null)"})
+    (( ${#plugins} )) && compadd -a plugins
+}
+
+_risset_installed_plugins() {
+    local -a plugins
+    plugins=(${(f)"$(risset list --installed --nameonly 2>/dev/null)"})
+    (( ${#plugins} )) && compadd -a plugins
+}
+
+_risset_opcodes() {
+    local -a opcodes
+    opcodes=(${(f)"$(risset listopcodes 2>/dev/null)"})
+    (( ${#opcodes} )) && compadd -a opcodes
+}
+
+_risset_dev() {
+    local context state state_descr line
+    typeset -A opt_args
+    local -a commands
+    commands=(
+        'opcodesxml:Generate xml output similar to opcodes.xml'
+        'codesign:Code sign all installed plugins (macos only)'
+        'completions:Output or install the shell completions'
+    )
+    if (( CURRENT == 2 )); then
+        _describe -t commands 'dev command' commands
+        return
+    fi
+    case $words[2] in
+        opcodesxml)
+            # Drop the "dev" word so that _arguments treats "opcodesxml"
+            # as the command name and completes its options.
+            words=($words[2,-1])
+            (( CURRENT-- ))
+            _arguments '--outfile=[Set the output file (use "stdout" to print to stdout)]:file:_files'
+            ;;
+        codesign)
+            ;;
+        completions)
+            # Drop the "dev" word so that _arguments treats "completions"
+            # as the command name and completes its options.
+            words=($words[2,-1])
+            (( CURRENT-- ))
+            _arguments \
+                '(--bash --zsh)--fish[Use the fish shell]' \
+                '(--fish --zsh)--bash[Use the bash shell]' \
+                '(--fish --bash)--zsh[Use the zsh shell]' \
+                '--install[Install the completions instead of printing them to stdout]'
+            ;;
+        *)
+            _describe -t commands 'dev command' commands
+            ;;
+    esac
+}
+
+_risset_csound() {
+    local context state state_descr line
+    typeset -A opt_args
+    local -a commands
+    commands=('install:Install csound')
+    if (( CURRENT == 2 )); then
+        _describe -t commands 'csound command' commands
+        return
+    fi
+    case $words[2] in
+        install)
+            # Drop the "csound" word so that _arguments treats "install"
+            # as the command name and completes its options.
+            words=($words[2,-1])
+            (( CURRENT-- ))
+            _arguments '--force[Reinstall csound even if it is already installed]'
+            ;;
+        *)
+            _describe -t commands 'csound command' commands
+            ;;
+    esac
+}
+
+_risset() {
+    local context state state_descr line
+    typeset -A opt_args
+
+    _arguments -C \
+        '(-h --help)'{-h,--help}'[Show help and exit]' \
+        '--debug[Print debug information]' \
+        '--no-color[Disable colored output]' \
+        '--update[Update the plugins data before any action]' \
+        '--stop-on-error[Stop parsing if an error is detected]' \
+        '--user-plugins-path=[Override the user plugins path]:path:_files -/' \
+        '--version[Print version and exit]' \
+        '1:command:->command' \
+        '*::arg:->args'
+
+    case $state in
+        command)
+            local -a commands
+            commands=(
+                'list:List packages'
+                'install:Install or update a package'
+                'remove:Remove a package'
+                'show:Show information about a plugin'
+                'makedocs:Build the documentation for all defined plugins'
+                'man:Open manual page for an installed opcode'
+                'update:Update repository metadata'
+                'listopcodes:List installed opcodes'
+                'resetcache:Remove local cache'
+                'info:Outputs information about risset itself in json format'
+                'upgrade:Upgrade any installed plugin to a new version'
+                'download:Download a plugin'
+                'validate:Validate a risset.json definition'
+                'dev:Commands for developer use'
+                'csound:Manage the csound installation'
+            )
+            _describe -t commands 'risset command' commands
+            ;;
+        args)
+            case $words[1] in
+                list)
+                    _arguments \
+                        '--json[Outputs list as json]' \
+                        '--all[List all plugins, even those without a binary for this platform]' \
+                        '--nameonly[Output just the name of each plugin]' \
+                        '--installed[List only installed plugins]' \
+                        '--upgradeable[List only installed packages which can be upgraded]' \
+                        '--noheader[Do not print any extra information]' \
+                        '(-o --outfile)'{-o,--outfile}'[Outputs to a file]:file:_files' \
+                        '(-1 --oneline)'{-1,--oneline}'[List each plugin in one line]'
+                    ;;
+                install)
+                    _arguments \
+                        '--force[Force install/reinstall]' \
+                        '*:plugin:_risset_plugins'
+                    ;;
+                remove)
+                    _arguments '*:plugin:_risset_installed_plugins'
+                    ;;
+                show)
+                    _arguments \
+                        '--full[Show additional information about a plugin]' \
+                        '1:plugin:_risset_plugins'
+                    ;;
+                makedocs)
+                    _arguments \
+                        '--onlyinstalled[Build docs only for installed plugins]' \
+                        '(-o --outfolder)'{-o,--outfolder}'[Destination folder to place the documentation]:folder:_files -/'
+                    ;;
+                man)
+                    _arguments \
+                        '(-p --path)'{-p,--path}'[Only print the path of the manual page]' \
+                        '(-s --simplepath)'{-s,--simplepath}'[Print just the path of the manual page]' \
+                        '(-m --markdown)'{-m,--markdown}'[Use the .md page instead of the .html version]' \
+                        '--html[Open the .html version of the manpage]' \
+                        '(-e --external)'{-e,--external}'[Open the man page in the default app]' \
+                        '--theme=[Style used when displaying markdown files]:theme:(dark light gruvbox-dark gruvbox-light material fruity native)' \
+                        '*:opcode:_risset_opcodes'
+                    ;;
+                update)
+                    ;;
+                listopcodes)
+                    _arguments \
+                        '--all[List all opcodes, even those within not installed plugins]' \
+                        '(-l --long)'{-l,--long}'[Long format]'
+                    ;;
+                resetcache)
+                    _arguments '--full[Remove the entire cache]'
+                    ;;
+                info)
+                    _arguments \
+                        '--outfile=[Save output to this path]:file:_files' \
+                        '--full[Include all available information]'
+                    ;;
+                upgrade)
+                    ;;
+                download)
+                    _arguments \
+                        '--path=[Directory to download the plugin to]:folder:_files -/' \
+                        '--platform=[The platform of the plugin to download]:platform:(linux macos windows macos-arm64 linux-arm64)' \
+                        '1:plugin:_risset_plugins'
+                    ;;
+                validate)
+                    _arguments '1:infile:_files'
+                    ;;
+                dev)
+                    _risset_dev
+                    ;;
+                csound)
+                    _risset_csound
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+# Register the completion. When installed as an autoloadable _risset in
+# $fpath this call is unnecessary, but it allows sourcing the file directly.
+compdef _risset risset
