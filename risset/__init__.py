@@ -1202,7 +1202,8 @@ def _zip_extract_file(zipfile: Path, extractpath: str) -> Path:
     return _zip_extract(zipfile, [extractpath])[0]
 
 
-def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', variants=False
+def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', variants=False,
+                   verbose: bool | int = False
                    ) -> set[str]:
     """
     Returns the set of opcodes detected by csound
@@ -1236,7 +1237,11 @@ def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', varian
         with _env_context(**env):
             import libcsound
             cs = libcsound.Csound(opcodeDir=opcode_dir)
+            if verbose:
+                cs.addOption("--verbose" if not isinstance(verbose, int) else f"--verbose={verbose}")
+            cs.start()
             opcodes = cs.getOpcodes()
+            cs.stop()
             cs.destroy()
             if variants:
                 out = {opcode.name for opcode in opcodes}
@@ -2321,7 +2326,8 @@ class MainIndex:
         opcodes = csound_opcodes(variants=False)
         recognized = test in opcodes
         if not recognized:
-            self._debug_plugin_recognition_failure(plugin, test, opcodes)
+            opcodes2 = csound_opcodes(variants=False, verbose=100)
+            self._debug_plugin_recognition_failure(plugin, test, opcodes2)
         return recognized
 
     def plugin_installed_path(self, plugin: Plugin) -> Path | None:
