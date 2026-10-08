@@ -1239,6 +1239,8 @@ def csound_opcodes(opcode_dir='', libcsound_path='', user_plugins_dir='', varian
             cs = libcsound.Csound(opcodeDir=opcode_dir)
             if verbose:
                 cs.addOption("--verbose" if not isinstance(verbose, int) else f"--verbose={verbose}")
+            # we need to call start because in the latest csound 7 (oct 2026) modules (plugins)
+            # are loaded lazy
             cs.start()
             opcodes = cs.getOpcodes()
             cs.stop()
@@ -2326,8 +2328,7 @@ class MainIndex:
         opcodes = csound_opcodes(variants=False)
         recognized = test in opcodes
         if not recognized:
-            opcodes2 = csound_opcodes(variants=False, verbose=100)
-            self._debug_plugin_recognition_failure(plugin, test, opcodes2)
+            self._debug_plugin_recognition_failure(plugin, test, opcodes)
         return recognized
 
     def plugin_installed_path(self, plugin: Plugin) -> Path | None:
