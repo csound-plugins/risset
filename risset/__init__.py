@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import importlib.resources
 import sys
 
 if (sys.version_info.major, sys.version_info.minor) < (3, 12):
@@ -3621,6 +3622,105 @@ def cmd_list_installed_opcodes(plugins_index: MainIndex, args) -> str:
     return ''
 
 
+_COMPLETION_FILENAMES = {
+    "fish": "risset.fish",
+    "bash": "risset.bash",
+    "zsh": "_risset",
+}
+
+
+def _completion_source(shell: str) -> str:
+    """Return the contents of the completion file for the given shell"""
+    filename = _COMPLETION_FILENAMES[shell]
+    resource = importlib.resources.files("risset") / "data" / "completions" / filename
+    return resource.read_text(encoding="utf-8")
+
+
+def _detect_current_shell() -> str | None:
+    """
+    Best-effort detection of the shell risset was invoked from.
+
+    The parent process name is inspected first, falling back to the SHELL
+    environment variable. Returns one of 'fish', 'bash' or 'zsh', or None
+    if the shell could not be determined.
+    """
+    candidates: list[str] = []
+    try:
+        out = subprocess.check_output(["ps", "-o", "comm=", "-p", str(os.getppid())],
+                                      text=True, stderr=subprocess.DEVNULL).strip()
+        if out:
+            candidates.append(out)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    shell = os.environ.get("SHELL")
+    if shell:
+        candidates.append(shell)
+    for candidate in candidates:
+        name = Path(candidate).name.lstrip("-")
+        if name in _COMPLETION_FILENAMES:
+            return name
+    return None
+
+
+def _completion_install_dir(shell: str) -> Path:
+    """
+    Return the user completion directory for the given shell
+
+    Follows the XDG base directory specification, with the usual defaults:
+        fish  ~/.config/fish/completions
+        bash  ~/.local/share/bash-completion/completions
+        zsh   ~/.local/share/zsh/site-functions
+    """
+    config_home = os.environ.get("XDG_CONFIG_HOME")
+    data_home = os.environ.get("XDG_DATA_HOME")
+    config_root = Path(config_home) if config_home else Path.home() / ".config"
+    data_root = Path(data_home) if data_home else Path.home() / ".local" / "share"
+    if shell == "fish":
+        return config_root / "fish" / "completions"
+    elif shell == "bash":
+        return data_root / "bash-completion" / "completions"
+    elif shell == "zsh":
+        return data_root / "zsh" / "site-functions"
+    raise ValueError(f"Unknown shell: {shell}")
+
+
+def _install_completion(shell: str) -> Path:
+    """Install the completion file for the given shell, returning its path"""
+    destdir = _completion_install_dir(shell)
+    destdir.mkdir(parents=True, exist_ok=True)
+    destfile = destdir / _COMPLETION_FILENAMES[shell]
+    destfile.write_text(_completion_source(shell), encoding="utf-8")
+    return destfile
+
+
+def cmd_dev_completions(args) -> str:
+    """
+    Output (or install) the shell completion for a given shell
+
+    The shell can be selected explicitly (--fish, --bash, --zsh); otherwise
+    it is detected from the calling process. With --install the completion
+    is written to the user completion directory of that shell instead of
+    being printed to stdout.
+    """
+    if _session.platform not in ("linux", "macos"):
+        return f"Shell completions are only supported on linux and macos, not on '{_session.platform}'"
+
+    shell = args.shell or _detect_current_shell()
+    if shell is None:
+        return ("Could not detect the current shell. Use --fish, --bash or --zsh "
+                "to select one explicitly")
+
+    if args.install:
+        destfile = _install_completion(shell)
+        _info(f"Installed {shell} completions to {destfile}")
+        if shell == "zsh":
+            _info("Make sure the directory is in your $fpath before calling compinit")
+        return ''
+
+    print(_completion_source(shell), end='')
+    return ''
+
+
 def cmd_dev_opcodesxml(idx: MainIndex, args) -> str:
     outstr = idx.generate_opcodes_xml()
     outfile = args.outfile or RISSET_OPCODESXML
@@ -4110,6 +4210,19 @@ def main():
         "codesign", help="Code sign all installed plugins (macos only)")
     dev_codesign_cmd.set_defaults(func=cmd_dev_codesign)
 
+    dev_completions_cmd = dev_subparsers.add_parser(
+        "completions", help="Output or install the shell completions (linux and macos only)")
+    shellgroup = dev_completions_cmd.add_mutually_exclusive_group()
+    shellgroup.add_argument("--fish", dest="shell", action="store_const", const="fish",
+                            help="Use the fish shell (default: detect the current shell)")
+    shellgroup.add_argument("--bash", dest="shell", action="store_const", const="bash",
+                            help="Use the bash shell (default: detect the current shell)")
+    shellgroup.add_argument("--zsh", dest="shell", action="store_const", const="zsh",
+                            help="Use the zsh shell (default: detect the current shell)")
+    dev_completions_cmd.add_argument("--install", action="store_true",
+                                     help="Install the completions instead of printing them to stdout")
+    dev_completions_cmd.set_defaults(func=cmd_dev_completions)
+
     # csound: manage the csound installation
     csound_cmd = subparsers.add_parser("csound", help="Manage the csound installation")
     csound_subparsers = csound_cmd.add_subparsers(dest='csound_command')
@@ -4147,10 +4260,17 @@ def main():
             _errormsg(errormsg)
             sys.exit(1)
         sys.exit(0)
-
-    if args.command == 'dev' and not args.dev_command:
-        dev_cmd.print_help()
-        sys.exit(1)
+    elif args.command == 'dev':
+        if not args.dev_command:
+            dev_cmd.print_help()
+            sys.exit(1)
+        if args.dev_command == 'completions':
+            errormsg = cmd_dev_completions(args)
+            if errormsg:
+                _errormsg(f"Command dev {args.dev_command} failed")
+                _errormsg(errormsg)
+                sys.exit(1)
+            sys.exit(0)
 
     update = args.update or args.command == 'update'
 

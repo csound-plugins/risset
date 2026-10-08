@@ -31,7 +31,10 @@ dependencies = [
 risset = "risset:main"
 
 [tool.setuptools]
-py-modules = ["risset"]
+packages = ["risset"]
+
+[tool.setuptools.package-data]
+risset = ["data/completions/*"]
 
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
