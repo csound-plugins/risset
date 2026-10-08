@@ -2262,6 +2262,47 @@ class MainIndex:
         manifests = list(path.glob("*.json"))
         return manifests
 
+    def _debug_plugin_recognition_failure(self, plugin: Plugin, probe_opcode: str,
+                                          detected_opcodes: set[str]) -> None:
+        """Log details that can help explain why Csound did not load a plugin."""
+        if not _session.debug:
+            return
+
+        binary = plugin.find_binary()
+        binary_name = binary.binary_filename() if binary else '<no matching binary>'
+        installed_path = self.plugin_installed_path(plugin)
+        plugin_dir = self.user_plugins_path
+        _debug(f"Plugin '{plugin.name}' was not recognized by Csound")
+        _debug(f"  Probe opcode: {probe_opcode!r}; declared opcodes: {len(plugin.opcodes)}; "
+               f"detected Csound opcodes: {len(detected_opcodes)}")
+        _debug(f"  Expected binary: {binary_name}; installed binary: {installed_path or '<not found>'}")
+        _debug(f"  Risset user plugins directory: {plugin_dir} (exists: {plugin_dir.is_dir()})")
+        for envvar in ('CS_USER_PLUGINDIR', 'OPCODE7DIR64', 'OPCODE6DIR64', 'LIBCSOUNDPATH'):
+            _debug(f"  {envvar}={os.environ.get(envvar, '<unset>')}")
+        present = [opcode for opcode in plugin.opcodes if opcode in detected_opcodes]
+        _debug(f"  Declared opcodes detected from this plugin: {present[:20]}"
+               f"{' ...' if len(present) > 20 else ''}")
+        _debug(f"  Risset platform: {_session.platformid}; process architecture: {platform.machine()}; "
+               f"Csound version: {_session.csound_version_tuple}")
+        if sys.platform == 'darwin' and installed_path is not None:
+            for tool, args in (
+                ('file', ['-L', installed_path.as_posix()]),
+                ('otool', ['-L', installed_path.as_posix()]),
+                ('codesign', ['--verify', '--verbose=2', installed_path.as_posix()]),
+            ):
+                executable = shutil.which(tool)
+                if not executable:
+                    continue
+                try:
+                    result = subprocess.run([executable, *args], capture_output=True,
+                                            text=True, check=False)
+                except OSError as e:
+                    _debug(f"  Could not run {tool} diagnostics: {e}")
+                    continue
+                output = (result.stdout + result.stderr).strip()
+                _debug(f"  {tool} exit code: {result.returncode}" +
+                       (f"; output: {output}" if output else ""))
+
     def _is_plugin_recognized_by_csound(self, plugin: Plugin) -> bool:
         """
         Check if a given plugin is installed
@@ -2272,9 +2313,16 @@ class MainIndex:
         Returns:
             True if the plugin is recognized by csound
         """
+        if not plugin.opcodes:
+            _debug(f"Plugin '{plugin.name}' declares no opcodes; cannot verify that Csound loaded it")
+            return False
+
         test = plugin.opcodes[0]
         opcodes = csound_opcodes(variants=False)
-        return test in opcodes
+        recognized = test in opcodes
+        if not recognized:
+            self._debug_plugin_recognition_failure(plugin, test, opcodes)
+        return recognized
 
     def plugin_installed_path(self, plugin: Plugin) -> Path | None:
         """
@@ -2668,12 +2716,13 @@ class MainIndex:
                 return ErrorMsg(f"Tried to install plugin {plugin.name}, but the binary"
                                 f" is not present.")
             else:
-                if platformid.startswith('macos'):
-                    _errormsg(f"The plugin '{plugin.name}' was not recognized. The reason might be that the binary"
-                              f" needs to be code-signed. ")
+                probe_opcode = plugin.opcodes[0] if plugin.opcodes else '<none declared>'
                 return ErrorMsg(f"Tried to install plugin {plugin.name}, but opcode "
-                                f"{plugin.opcodes[0]}, which is provided by this plugin, "
-                                f"is not present")
+                                f"{probe_opcode}, which is provided by this plugin, "
+                                f"is not reported by Csound. The binary was installed at "
+                                f"{installed_path.as_posix()} (plugins directory: {installpath.as_posix()}). "
+                                f"Check the debug output for Csound's plugin search paths, detected opcode "
+                                f"count, and any platform or dynamic-library loading errors.")
 
         # Install assets, if any
         assetfiles = []

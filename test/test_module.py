@@ -85,7 +85,14 @@ def main() -> int:
 
     # 3.4 - the same process must now see it as installed
     if not idx.is_plugin_installed(plugin):
-        print("ERROR: plugin 'else' is not recognized after installation in the same process",
+        binary = plugin.find_binary()
+        expected_binary = binary.binary_filename() if binary else '<no matching binary>'
+        installed_path = idx.plugin_installed_path(plugin)
+        print(f"ERROR: plugin 'else' was installed but Csound does not report its "
+              f"probe opcode {plugin.opcodes[0]!r}; expected binary {expected_binary!r}, "
+              f"installed path {str(installed_path) if installed_path else '<not found>'!r}, "
+              f"plugins directory {str(idx.user_plugins_path)!r}. See preceding debug "
+              f"output for Csound's detected opcode count and plugin search paths.",
               file=sys.stderr)
         return 1
     print("OK: plugin 'else' is recognized in the same process")
