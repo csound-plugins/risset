@@ -17,22 +17,6 @@ other python package. In general, The most convenient way to install risset is
 via [uv]( https://astral.sh/uv).
 
 
-## Linux
-
-
-```bash
-
-# Install uv itself
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install risset
-uv tool install risset
-
-# To upgrade risset itself:
-uv tool upgrade risset
-```
-
-
 ## MacOS / linux
 
 ```bash
@@ -178,155 +162,204 @@ is because `i_initphase` is set to 1 by default. It is possible to make `mtro` s
 ---------------
 
 
-# Risset commands
+# Commands and options
 
-### update
+Run `risset --help` or `risset <command> --help` for command-line help. Global
+options go before the command name:
 
-Update the local index to the latest state.
-
-    $ risset update
-
-
-### list
-
-List all available plugins for your platform
-
-    $ risset list [options]
-
-##### Options
-
-* `--nameonly`: Output just the name of each plugin
-* `--installed`: List only installed plugins
-* `--upgradeable`: List only installed packages which can be upgraded
-* `--notinstalled`: List only plugins which are not installed
-* `-1, --oneline`: List each plugin in one line
-
-
-### show
-
-Show information about a plugin
-
-    $ risset show <plugin>
-
-
-### install
-
-Install one or multiple plugins
-
-    $ risset install [--force] <plugin> [<plugin2>, ...]
-
-Install a given plugin for the current platform. Plugins are installed into
-the user folder (no administrator requirements are needed). Look at the `info`
-command to query information about the system.
-
-##### Options
-
-* `--force`: Installs a plugin even if the plugin with the same version is already installed
-
-the system folder where all other builtin plugins are installed (this requires administrator rights in some platforms). Admin rights are needed for this.
-
-
-### remove
-
-Remove an installed plugin
-
-    $ risset remove <plugin>
-
-
-### man 
-
-Open man page as markdown in the command line
-
-
-    $ risset man [options] <opcode>
-
-
-##### Options
-
-* `-s, --simplepath`: Print just the path of the manual page
-* `-m, --markdown`: Use the .md page instead of the .html version
-* `-e, --external`: Open the man page in the default app. This is only used when opening the markdown man page.
-* `--html`: Opens the .html version of the manpage in the default browser (or outputs the path with the --path option)
-* `--theme {dark,light,gruvbox-dark,gruvbox-light,material,fruity,native}`: Style used when displaying markdown files (default=dark)
-
-Open the html man page in the default browser:
-
-    $ risset man --html <opcode>
-
-    
-### upgrade
-
-    $ risset upgrade
-
-Upgrade any installed plugin to the latest version
-
-
-### listopcodes
-
-    $ risset listopcodes
-
-List installed opcodes
-
-
-##### Options
-
-* `-l, --long`: Long format
-
-```
-$ risset listopcodes -l
-
-accum               else        Simple accumulator of scalar values
-atstop              else        Schedule an instrument at the end of the current instrument
-beadsynt            beosc       Band-Enhanced Oscillator-Bank
-beosc               beosc       Band-Enhanced Oscillator
-bisect              else        Returns the fractional index of a value within a sorted ar…ay / tab
-chuap               chua        Simulates Chua's oscillator
-crackle             else        generates noise based on a chaotic equation
-defer               poly        Run an opcode at the end of current event
-deref               else        Dereference a previously created reference to a variable
-detectsilence       else        Detect when input falls below an amplitude threshold
-dict_del            klib        Remove a key:value pair from a hashtable
-dict_dump           klib        Dumps the contents of this dict as a string
-dict_exists         klib        Returns 1 if the dict exists, 0 otherwise
-dict_free           klib        Free a hashtable
-...
-
+```text
+risset [global-options] <command> [command-options] [arguments]
 ```
 
-### download
+## Global options
 
-    $ risset download <plugin>
+* `--debug`: Print debug information.
+* `--no-color`: Disable colored output.
+* `--update`: Update the plugin data before running the command.
+* `--stop-on-error`: Stop parsing plugin data when an error is detected.
+* `--user-plugins-path PATH`: Use `PATH` as the user plugin directory (same as
+  setting `CS_USER_PLUGINDIR`).
+* `--version`: Print the risset version and exit.
 
-Download a plugin
+Risset also reads these environment variables:
 
-##### Options
+* `LIBCSOUNDPATH`: Path to the libcsound library used to query opcodes.
+* `CS_USER_PLUGINDIR`: Override the user plugin directory.
+* `OPCODE7DIR64`: Path to Csound's system opcodes.
 
-* `--path PATH`: Directory to download the plugin to (default: current directory)
-* `--platform`: The platform of the plugin to download (default: current platform). One of *linux*, *macos*, *window*, *macos-arm64*, *linux-arm64*
+## Package commands
 
+### `update`
 
-### info
+Update the local plugin index and metadata:
 
-    $ risset info [options]
+```bash
+risset update
+```
 
-Outputs information about the environment as json in order to be integrated by other systems.
-For example, **CsoundQT** uses this command to read the installed plugins and their opcodes
-and documentation
+### `list`
 
-##### Options
+List plugins available for the current platform and Csound version. By default,
+plugins without a matching binary are omitted.
 
-* `--outfile OUTFILE`: Save output to this path
-* `--full`: Include all available information
+```text
+risset list [options]
+```
 
+Options:
 
-### makedocs
+* `--all`: Include plugins without a binary for the current platform or Csound version.
+* `--json`: Output the plugin list as JSON.
+* `-o, --outfile FILE`: Write output to a file (only applies with `--json`).
+* `--nameonly`: Print only plugin names.
+* `--installed`: List only installed plugins.
+* `--upgradeable`: List only installed plugins that can be upgraded.
+* `--noheader`: Omit extra information in the list output.
+* `-1, --oneline`: Print each plugin on one line.
 
-Generate/update documentation:
+### `show`
 
-    $ risset makedocs
+Show information about a plugin. `--full` includes additional information,
+including the binary URL.
 
-Build the documentation for all defined plugins. This depends on **mkdocs** being installed
+```text
+risset show [--full] <plugin>
+```
 
+### `install`
+
+Install or update one or more plugins into the user plugin directory; no
+administrator privileges are normally needed. Plugin names may be glob
+patterns; quote patterns so the shell does not expand them first.
+
+```text
+risset install [--force] <plugin> [<plugin> ...]
+```
+
+`--force` forces a reinstall, including when the installed version is unknown.
+
+### `remove`
+
+Remove one or more installed plugins:
+
+```text
+risset remove <plugin> [<plugin> ...]
+```
+
+### `upgrade`
+
+Upgrade all installed plugins for which a newer indexed version is available:
+
+```bash
+risset upgrade
+```
+
+### `download`
+
+Move a plugin's binary to a directory without installing it. The destination
+directory must already exist.
+
+```text
+risset download [--path DIRECTORY] [--platform PLATFORM] <plugin>
+```
+
+* `--path DIRECTORY`: Destination directory (default: current directory).
+* `--platform PLATFORM`: Select `linux`, `linux-arm64`, `macos`, `macos-arm64`,
+  or `windows` (default: current platform).
+
+### `resetcache`
+
+Clear the cached manual pages. `--full` also removes the local plugin index and
+cloned plugin repositories.
+
+```text
+risset resetcache [--full]
+```
+
+## Opcode and documentation commands
+
+### `listopcodes`
+
+List installed opcodes. `--all` includes opcodes from plugins that are not
+installed; `-l, --long` also prints each opcode's plugin and description.
+
+```text
+risset listopcodes [--all] [-l | --long]
+```
+
+### `man`
+
+Display an opcode's manual page. Multiple opcode names and quoted glob patterns
+are accepted. With no opcode argument, risset opens the generated documentation
+index.
+
+```text
+risset man [options] [<opcode> ...]
+```
+
+* `-p, --path`: Print `<opcode>:<path>` for each manual page.
+* `-s, --simplepath`: Print only each manual-page path.
+* `-m, --markdown`: Use the Markdown page (the default format).
+* `--html`: Open the HTML page in the default browser. `--html` and `--markdown`
+  are mutually exclusive.
+* `-e, --external`: Open the Markdown page in the default application instead
+  of displaying it in the terminal.
+* `--theme THEME`: Markdown display style: `dark` (default), `light`,
+  `gruvbox-dark`, `gruvbox-light`, `material`, `fruity`, or `native`.
+
+### `makedocs`
+
+Build documentation for plugin opcodes (requires **mkdocs**):
+
+```text
+risset makedocs [--onlyinstalled] [-o DIRECTORY]
+```
+
+* `--onlyinstalled`: Build documentation only for installed plugins.
+* `-o, --outfolder DIRECTORY`: Write documentation to this directory.
+
+### `info`
+
+Print environment and installation information as JSON. The output can be used
+by other applications, including CsoundQt.
+
+```text
+risset info [--full] [--outfile FILE]
+```
+
+* `--full`: Include information about all available plugins.
+* `--outfile FILE`: Save the JSON output to a file instead of stdout.
+
+### `validate`
+
+Validate a `risset.json` plugin definition and the manual pages for its opcodes:
+
+```text
+risset validate <infile>
+```
+
+## Csound and developer commands
+
+### `csound install`
+
+Install Csound using libcsound's installer. On Windows, run from an
+Administrator session. Use `--force` to reinstall an existing Csound installation.
+
+```text
+risset csound install [--force]
+```
+
+### `dev`
+
+Developer utilities are grouped under `risset dev`:
+
+* `risset dev opcodesxml [--outfile FILE]`: Generate `opcodes.xml`; use
+  `--outfile stdout` to print it to stdout.
+* `risset dev codesign`: Code-sign installed plugin binaries (macOS only).
+* `risset dev completions [--fish | --bash | --zsh] [--install]`: Print shell
+  completions, or install them with `--install`. The shell is detected when
+  possible; specify a shell option if detection fails. Supported on Linux and
+  macOS.
 
 
 -------
