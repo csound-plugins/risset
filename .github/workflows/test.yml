@@ -2,13 +2,12 @@ on: [push, workflow_dispatch]
 
 jobs:
   testlinux:
-    name: Test risset on linux - py${{ matrix.python-version }} - ${{ matrix.csound-branch }}
+    name: Test risset on linux - py${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.12"]
-        csound-branch: ["csound6", "develop"]
     steps:
       - uses: actions/checkout@v3
 
@@ -19,23 +18,7 @@ jobs:
       - name: run pure-python tests
         run: python test/test_version_range.py
 
-      - name: install csound 6
-        if: matrix.csound-branch == 'csound6'
-        run: |
-          git clone -b csound6 https://github.com/csound/csound --depth 1
-          cd csound
-          sudo apt-get update && sudo apt-get install cmake libsndfile1-dev libasound2-dev libjack-dev portaudio19-dev libportmidi-dev libpulse-dev default-jdk liblo-dev fluid libpng-dev libgmm++-dev bison flex libportsmf-dev libcunit1-dev
-          mkdir build && cd build
-          cmake .. -DUSE_MP3=0 -DBUILD_TESTS=OFF -DBUILD_LUA_INTERFACE=OFF -DBUILD_DSSI_OPCODES=OFF -DBUILD_JAVA_INTERFACE=OFF -DINSTALL_PYTHON_INTERFACE=OFF
-          cmake --build . --parallel
-          sudo make install
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
-          echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
-          sudo ldconfig
-          csound --version
-
-      - name: install csound develop
-        if: matrix.csound-branch == 'develop'
+      - name: install csound 7 (develop)
         run: |
           git clone -b develop https://github.com/csound/csound --depth 1
           cd csound
@@ -62,7 +45,7 @@ jobs:
           csound -z1 2>&1 | grep dict_ || echo ok
 
           echo "Checking that the plugins are functional"
-          csound -o test/lfnoise-linux-${{ matrix.csound-branch }}-git.flac --format=flac test/lfnoise.csd
+          csound -o test/lfnoise-linux-csound7-git.flac --format=flac test/lfnoise.csd
           mkdir -p artifacts
           cp test/*.flac artifacts
 
@@ -83,7 +66,6 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.12"]
-        csound-branch: ["csound6", "develop"]
     steps:
       - uses: actions/checkout@v3
 
@@ -100,25 +82,11 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      - name: install csound6
-        if: matrix.csound-branch == 'csound6'
-        run: |
-          curl -L -o csound-binaries.zip https://github.com/csound/csound/releases/download/6.18.1/Csound-6.18.1-windows-x64-binaries.zip
-          Expand-Archive csound-binaries.zip -DestinationPath ".\csound-binaries"
-          New-Item -Type Directory -Force "C:/Program Files/csound"
-          cp .\csound-binaries\build\Release\* "C:/Program Files/csound"
-
-          [Environment]::SetEnvironmentVariable("PATH", $Env:Path, [EnvironmentVariableTarget]::Machine)          
-          $Env:Path = "C:\Program Files\csound;$Env:Path"        
-          Write-Output $Env:PATH
-          csound.exe --version
       - uses: ilammy/msvc-dev-cmd@v1
-        if: matrix.csound-branch == 'develop'
         with:
           arch: x64
 
       - name: checkout csound develop
-        if: matrix.csound-branch == 'develop'
         run: |
           git clone -b develop https://github.com/csound/csound --depth 1
           cd csound
@@ -128,15 +96,13 @@ jobs:
 
       - name: restore csound build cache
         id: restore-cache
-        if: matrix.csound-branch == 'develop'
         uses: actions/cache/restore@v4
         with:
           path: csound/build
           key: csound-build-${{ runner.os }}-${{ env.CSOUND_SHA }}-${{ hashFiles('.github/workflows/test.yml') }}
           restore-keys: csound-build-${{ runner.os }}-
 
-      - name: install csound develop
-        if: matrix.csound-branch == 'develop'
+      - name: install csound 7 (develop)
         env:
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
         run: |
@@ -161,7 +127,7 @@ jobs:
           csound.exe --version
 
       - name: save csound build cache
-        if: matrix.csound-branch == 'develop' && steps.restore-cache.outputs.cache-hit != 'true'
+        if: steps.restore-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: csound/build
@@ -183,7 +149,7 @@ jobs:
           echo "Checking that the plugin is installed and recognized by csound"
           csound -z1 | Select-String "lfnoise|dict_"
 
-          csound -o test/lfnoise-linux-${{ matrix.csound-branch }}-pip.flac --format=flac test/lfnoise.csd
+          csound -o test/lfnoise-windows-csound7-pip.flac --format=flac test/lfnoise.csd
 
           risset show else
           risset man mtro
@@ -191,14 +157,13 @@ jobs:
           risset makedocs
 
   testmacos:
-    name: Test macos ${{ matrix.arch }} - ${{ matrix.csound-branch }} - ${{ matrix.python-version }}
+    name: Test macos ${{ matrix.arch }} - ${{ matrix.python-version }}
     runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.12"]
         arch: ["arm64"]
-        csound-branch: ["csound6", "develop"]
     steps:
       - uses: actions/checkout@v3
 
@@ -206,22 +171,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: macos - install csound 6
-        if: matrix.csound-branch == 'csound6'
-        run: |
-          set -x
-          curl -L -o csound6.18.dmg https://github.com/csound/csound/releases/download/6.18.1/Csound-MacOS-universal-6.18.1.dmg
-          brew install p7zip
-          7z x csound6.18.dmg
-          cd Csound-universal-6.18.1
-          sudo installer -pkg csound-MacOS-universal-6.18.1.pkg -target /
-          csound --version
-          uname -m
-          file $(which csound)
-          cd ..
-
-      - name: install csound develop
-        if: matrix.csound-branch == 'develop'
+      - name: install csound 7 (develop)
         run: |
           git clone -b develop https://github.com/csound/csound --depth 1
           cd csound
@@ -251,7 +201,7 @@ jobs:
 
           echo "Ok..."
 
-          csound -o test/lfnoise-macos-${{ matrix.arch }}-${{ matrix.csound-branch }}-git.flac --format=flac test/lfnoise.csd
+          csound -o test/lfnoise-macos-${{ matrix.arch }}-csound7-git.flac --format=flac test/lfnoise.csd
 
           mkdir -p artifacts
           cp test/*.flac artifacts
@@ -313,7 +263,7 @@ jobs:
           path: artifacts/*
 
   # This test uses risset as a module (import risset) and installs csound via
-  # libcsound, so it is limited to csound 7 (develop). It runs in a clean
+  # libcsound, so it requires csound 7. It runs in a clean
   # environment, so no csound is preinstalled.
   testmodule:
     name: Test risset as a module (${{ matrix.os }})

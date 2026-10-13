@@ -21,7 +21,7 @@ requires-python = ">=3.12"
 keywords = ["csound"]
 
 dependencies = [
-    "libcsound>=0.18.5",
+    "libcsound>=1.0.0",
     "pygments",
     "mkdocs",
     "requests",

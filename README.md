@@ -8,6 +8,8 @@ at [risset-data](https://github.com/csound-plugins/risset-data).
 
 # Installation
 
+*risset* requires **csound 7** or later; csound 6 is no longer supported.
+
 Outside of **csound**, *risset* depends only on **git** and **python** (>= 3.9) 
 being installed.
 *risset* itself is a python program and can be installed as a any
@@ -78,18 +80,6 @@ $ risset list
 - sndmeta /2.0.0       | opcodes using libsndfile
 - risset /2.0.0        | Opcodes to access risset package metadata
 - poodle /2.0.0        | Faust plugins ported to csound
-- vst3 /1.1.0          | Host vst3 plugins in csound
-                       |    -- No binaries for linux-x86_64/7000
-                       |       Available binaries: linux-x86_64/csound>=6.18<7.0, windows-x86_64/csound>=6.18<7.0, macos-x86_64/csound>=6.18<7.0, macos-arm64/csound>=6.18<7.0
-- chua /0.1.0          | Implementation of a Chua oscillator
-                       |    -- No binaries for linux-x86_64/7000
-                       |       Available binaries: linux-x86_64/csound>=6.18<7.0, macos-x86_64/csound>=6.18<7.0, macos-arm64/csound>=6.18<7.0
-- hdf5 /0.1.0          | Read/Write signals and arrays to/from an hdf5 file
-                       |    -- No binaries for linux-x86_64/7000
-                       |       Available binaries: linux-x86_64/csound>=6.18<7.0, macos-x86_64/csound>=6.18<7.0, macos-arm64/csound>=6.18<7.0
-- python /0.1.0        | Opcodes to interact with an embedded python interpreter
-                       |    -- No binaries for linux-x86_64/7000
-                       |       Available binaries: linux-x86_64/csound>=6.18<7.0, macos-x86_64/csound>=6.18<7.0, macos-arm64/csound>=6.18<7.0
 
 ```
 
@@ -112,7 +102,7 @@ Author        : Eduardo Moguillansky (eduardo.moguillansky@gmail.com)
 URL           : https://github.com/csound-plugins/csound-plugins.git
 Version       : 1.18.2
 
-Installed     : Unknown (path: /home/xx/.local/lib/csound/6.0/plugins64/libpoly.so)
+Installed     : Unknown (path: /home/xx/.local/lib/csound/7.0/plugins64/libpoly.so)
 Manifest      : No manifest (installed manually)
 Abstract      : Multiple (parallel or sequential) instances of an opcode
 Description:
@@ -120,13 +110,9 @@ Description:
 Opcodes:
     defer, poly, poly0, polyseq
 Binaries:
-    * linux/csound>=6.17<7.0
     * linux/csound>=7.0
-    * macos/csound>=6.17<7.0
     * macos/csound>=7.0
-    * macos-arm64/csound>=6.17<7.0
     * macos-arm64/csound>=7.0
-    * windows/csound>=6.17<7.0
     * windows/csound>=7.0
 
 ```

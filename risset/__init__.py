@@ -55,6 +55,10 @@ class ParseError(Exception):
     """Parse error in a manifest file"""
 
 
+class Csound6BinaryError(ParseError):
+    """A binary/plugin is only available for csound 6, which is no longer supported"""
+
+
 def _subproc_call(args: list[str] | str, shell: bool | None = None):
     if shell is None:
         shell = isinstance(args, str)
@@ -272,6 +276,11 @@ def _csoundlib_version(libcsoundpath='') -> tuple[int, int]:
             versionid = libcsound.VERSION
     major = versionid // 1000
     minor = (versionid - major*1000) // 10
+    if major < 7:
+        raise ImportError(
+            f"Csound 6 is no longer supported by risset (found Csound "
+            f"{major}.{minor}). Install Csound 7 or later."
+        )
     return major, minor
 
 
@@ -416,10 +425,20 @@ class _VersionRange:
     includemax: bool = False
 
     def __post_init__(self):
-        if not isinstance(self.minversion, int) or self.minversion < 6000:
+        if not isinstance(self.minversion, int):
             raise ValueError(f"Invalid minversion: {self.minversion}")
-        if not isinstance(self.maxversion, int) or self.maxversion < 6000:
+        if not isinstance(self.maxversion, int):
             raise ValueError(f"Invalid maxversion: {self.maxversion}")
+
+    def supports_csound7(self) -> bool:
+        """
+        Returns True if this range includes at least one csound >= 7.0 version
+
+        Binary definitions which do not support csound 7 (i.e. csound 6 only)
+        are ignored altogether.
+        """
+        maxversion = self.maxversion or 99999
+        return maxversion > 7000 or (maxversion == 7000 and self.includemax)
 
     def contains(self, versionid: int) -> bool:
         """
@@ -434,13 +453,13 @@ class _VersionRange:
         Example
         -------
 
-            >>> v = _VersionRange(minversion=6180, maxversion=7000, includemin=True, includemax=False)
-            >>> v.contains(6190)
+            >>> v = _VersionRange(minversion=7000, maxversion=8000, includemin=True, includemax=False)
+            >>> v.contains(7010)
             True
-            >>> v.contains(7000)
+            >>> v.contains(8000)
             False
         """
-        if not isinstance(versionid, int) or versionid < 6000:
+        if not isinstance(versionid, int) or versionid < 7000:
             raise ValueError(f"Invalid versionid, got {versionid}")
         a = versionid > self.minversion if not self.includemin else versionid >= self.minversion
         maxversion = self.maxversion or 99999
@@ -488,7 +507,7 @@ def _parse_version(versionstr: str) -> _VersionRange:
     parts = [p for p in parts if p]
     if len(parts) % 2 != 0:
         raise ParseError(f"Could not parse version range: {versionstr}, parts: {parts}")
-    minversion = 6000
+    minversion = 7000
     maxversion = 99999
     includemax = True
     includemin = False
@@ -756,7 +775,7 @@ class Binary:
         Returns:
             True if the versionid is contained within the version range of this binary
         """
-        if not isinstance(versionid, int) or versionid < 6000:
+        if not isinstance(versionid, int) or versionid < 7000:
             raise ValueError(f"Invalid versionid: {versionid}")
         return self.csound_version_range().contains(versionid)
 
@@ -814,12 +833,12 @@ class IndexItem:
         path = _git_local_path(self.url)
         _git_update(path)
 
-    def read_definition(self: IndexItem) -> Plugin:
+    def read_definition(self: IndexItem) -> Plugin | None:
         """
         Read the plugin definition pointed by this plugin source
 
         Returns:
-            a Plugin
+            a Plugin, or None if the plugin defines no binary for csound >= 7
 
         Raises: PluginDefinitionError if there is an error
         """
@@ -835,7 +854,10 @@ class IndexItem:
             self.update()
             plugin = _read_plugindef(manifest.as_posix(), url=self.url,
                                      manifest_relative_path=self.path)
-            _info("... ok, that worked")
+            if plugin is not None:
+                _info("... ok, that worked")
+        if plugin is None:
+            return None
         plugin.cloned_path = _git_local_path(self.url)
         return plugin
 
@@ -951,7 +973,7 @@ class Plugin:
         Args:
             platformid: the platform id. If intel x86-64, simply the platform ('macos', 'linux', 'windows'),
                 otherwise the platform and architecture ('macos-arm64', 'linux-arm64', ...)
-            csound_version: the csound version as int (6.18 = 6180, 6.19 = 6190, 7.01 = 7010). This should be
+            csound_version: the csound version as int (7.0 = 7000, 7.01 = 7010). This should be
                 the version of csound for which the plugin is to be installed. In the plugin definition each
                 binary defines a version range for which it is built.
 
@@ -962,7 +984,7 @@ class Plugin:
 
         if not csound_version:
             csound_version = _session.csound_version
-        elif not isinstance(csound_version, int) or csound_version < 6000:
+        elif not isinstance(csound_version, int) or csound_version < 7000:
             raise ValueError(f"Invalid csound_version: {csound_version}")
 
         if not platformid:
@@ -1059,9 +1081,12 @@ def user_plugins_path(version: int | tuple[int, int] | None = None) -> Path:
     elif isinstance(version, int):
         major, minor = version, 0
     else:
-        raise TypeError(f"Expected an int major version (6, or 7), a version "
-                        f"tuple (6, 0) or None to use the installed version, "
+        raise TypeError(f"Expected an int major version (7), a version "
+                        f"tuple (7, 0) or None to use the installed version, "
                         f"got {version}")
+    if major != 7:
+        raise ValueError(f"Unsupported csound major version: {major}. "
+                         f"Csound 6 is no longer supported")
     cs_user_plugindir = os.getenv("CS_USER_PLUGINDIR")
 
     if cs_user_plugindir is not None:
@@ -1410,26 +1435,18 @@ def _version_tuple(versionstr: str) -> tuple[int, int, int]:
     return i1, i2, i3
 
 
-def _find_system_plugins_path(possible_paths: list[Path], majorversion) -> Path | None:
+def _find_system_plugins_path(possible_paths: list[Path]) -> Path | None:
     """
     Given a list of possible paths, find the folder where the system plugins are installed
     """
     ext = _plugin_extension()
     _debug("> Searching system plugins dir: ")
-    if majorversion == 6:
-        if sys.platform == "win32":
-            dll = "arrayops.dll"
-        else:
-            dll = "libarrayops" + ext
-    elif majorversion == 7:
-        if sys.platform == 'win32':
-            dll = "arrays.dll"
-        elif sys.platform == 'darwin':
-            dll = "librtauhal.dylib"
-        else:
-            dll = "libarrays" + ext
+    if sys.platform == 'win32':
+        dll = "arrays.dll"
+    elif sys.platform == 'darwin':
+        dll = "librtauhal.dylib"
     else:
-        raise ValueError(f"Expected 6 or 7, got {majorversion}")
+        dll = "libarrays" + ext
 
     for d in possible_paths:
         path = d.expanduser().resolve()
@@ -1545,6 +1562,10 @@ def _parse_binarydef(binarydef: dict, substitutions: dict[str, str]) -> Binary:
     url = _enforce_key(binarydef, 'url', str, )
     csound_version = _enforce_key(binarydef, 'csound_version', str)
 
+    if not _parse_version(csound_version).supports_csound7():
+        raise Csound6BinaryError(
+            f"binary is for csound 6 ({csound_version}); csound 6 is no longer supported")
+
     url = _expand_substitutions(url, substitutions)
     build_platform = binarydef.get('build_platform', 'unknown')
     return Binary(platform=normalized_platform, url=url, build_platform=build_platform,
@@ -1574,12 +1595,15 @@ def _enforce_key[T](d: dict, key: str, expected_type: type[T]) -> T:
     return value
 
 
-def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
+def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin | None:
     """
     Args:
         d: the loaded json
         pluginurl: the url of this plugin
         subpath: the path of the manifest's folder, relative to the root of the repository
+
+    Returns:
+        a Plugin, or None if the plugin defines no binary for csound >= 7
     """
     clonepath = _git_local_path(pluginurl)
     version = _normalize_version(_enforce_key(d, 'version', str))
@@ -1590,6 +1614,7 @@ def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
 
     binaries: list[Binary] = []
     binarydefs = _enforce_key(d, 'binaries', list)
+    skipped_csound6 = 0
     for binarydef in binarydefs:
         if not isinstance(binarydef, dict):
 
@@ -1599,12 +1624,19 @@ def _plugin_from_dict(d: dict, pluginurl: str, subpath: str) -> Plugin:
             # _debug(f"Parsing binary definition for {pluginname}: {binarydef}")
             binary = _parse_binarydef(binarydef, substitutions=substitutions)
             binaries.append(binary)
+        except Csound6BinaryError as e:
+            skipped_csound6 += 1
+            _debug(f"Skipping csound 6 binary for plugin {d.get('name', '??')}: {e}")
         except ParseError as e:
             _errormsg(f"Failed to parse binary definition for plugin {d.get('name', '??')}")
             _errormsg(f"... source data: {binarydef}")
             _errormsg(str(e))
 
     if not binaries:
+        if skipped_csound6:
+            _debug(f"Plugin {pluginname} defines no binary for csound >= 7 "
+                   f"({skipped_csound6} csound 6 binary/binaries skipped); skipping it")
+            return None
         raise SchemaError("No valid binaries defined")
 
     manifest_local_folder = clonepath / subpath
@@ -1697,7 +1729,7 @@ def _copy_recursive(src: Path, dest: Path) -> None:
 def _read_plugindef(filepath: str | Path,
                     url: str = '',
                     manifest_relative_path: str = ''
-                    ) -> Plugin:
+                    ) -> Plugin | None:
     """
     Create a Plugin from a plugin definition file (risset.json)
 
@@ -1706,7 +1738,7 @@ def _read_plugindef(filepath: str | Path,
         manifest_relative_path: relative path to manifest
 
     Returns:
-        a Plugin
+        a Plugin, or None if the plugin defines no binary for csound >= 7
 
     Raises SchemaError if the definition is invalid (it does not define
     all needed keys) or json.JSONDecodeError if the json itself is not correctly formatted
@@ -1912,7 +1944,6 @@ def default_system_plugins_path(major: int | None = None, minor=0) -> list[Path]
 
         if _session.architecture == 'arm64':
             # This is where debian in raspberry pi installs csound's plugins
-            # https://packages.debian.org/bullseye/armhf/libcsound64-6.0/filelist
             possible_dirs.append(f"/usr/lib/arm-linux-gnueabihf/csound/plugins64-{major}.{minor}/")
     elif platform == 'macos':
         # The path based on ~ is used when csound is compiled from source.
@@ -1954,26 +1985,24 @@ def system_plugins_path(majorversion: int | None = None) -> Path | None:
     if majorversion == 0:  # csound not found
         return None
     if (out := _session.cache.get(f'system_plugins_path_{majorversion}', _UNSET)) is _UNSET:
-        if majorversion not in (6, 7):
-            raise ValueError(f"Expected major version 6 or 7, got {majorversion}")
+        if majorversion != 7:
+            raise ValueError(f"Expected major version 7, got {majorversion}")
         _session.cache[f'system_plugins_path_{majorversion}'] = out = _system_plugins_path(majorversion=majorversion)
     return out
 
 
-def _envvar_opcodedir(majorversion: int) -> tuple[str | None, str]:
+def _envvar_opcodedir() -> tuple[str | None, str]:
     """
-    Returns the value of the envarionment variable for the opcodedir
+    Returns the value of the environment variable for the opcodedir
 
-    The varname is OPCODE6DIR64 for csound 6 or OPCODE7DIR64 for csound 7
+    The varname is OPCODE7DIR64 for csound 7.
     32 bit versions are not supported at the moment
 
     Returns:
         a tuple (value: str | None, varname: str). We differentiate the empty
         string from None, which means that the variable is unset
     """
-    if majorversion not in (6, 7):
-        raise ValueError(f"Expected major version 6 or 7, got {majorversion}")
-    varname = f"OPCODE{majorversion}DIR64"
+    varname = "OPCODE7DIR64"
     value = os.getenv(varname)
     return value, varname
 
@@ -1981,14 +2010,14 @@ def _envvar_opcodedir(majorversion: int) -> tuple[str | None, str]:
 def _system_plugins_path(majorversion: int = 7) -> Path | None:
     if majorversion == 0:
         return None
-    opcodedir, varname = _envvar_opcodedir(majorversion=majorversion)
+    opcodedir, varname = _envvar_opcodedir()
     if opcodedir:
         _debug(f"Env variable {varname}, set to {opcodedir}")
         possible_paths = [Path(p) for p in opcodedir.split(_get_path_separator())]
     else:
         possible_paths = default_system_plugins_path(major=majorversion)
 
-    out = _find_system_plugins_path(possible_paths, majorversion=majorversion)
+    out = _find_system_plugins_path(possible_paths)
     if not out:
         _debug(f"System plugins path not found. Searched paths: {[_.as_posix() for _ in possible_paths]}")
         _debug(f"Csound version: {_session.csound_version}, version tuple: {_session.csound_version_tuple}")
@@ -2081,10 +2110,10 @@ class MainIndex:
 
     def is_custom(self) -> bool:
         """
-        Returns True if the user has a custom plugins path or has set the OPCODE6DIR64/OPCODE7DIR64 env variable
+        Returns True if the user has a custom plugins path or has set the OPCODE7DIR64 env variable
         """
         return (self.user_plugins_path != user_plugins_path(version=self.majorversion) or
-                _envvar_opcodedir(self.majorversion)[0] is not None)
+                _envvar_opcodedir()[0] is not None)
 
     def _parse_index(self, updateindex=False, updateplugins=False, stop_on_errors=True) -> None:
         """
@@ -2137,12 +2166,16 @@ class MainIndex:
             for name, pluginsource in self.pluginsources.items():
                 try:
                     plugin = self._parse_plugin(name)
-                    self.plugins[name.lower()] = plugin
                 except Exception as e:
                     if stop_on_errors:
                         raise e
                     else:
                         _errormsg(f"Error while parsing plugin definition for '{name}': {e}")
+                    continue
+                if plugin is None:
+                    # no binary for csound >= 7 (message logged at debug level)
+                    continue
+                self.plugins[name.lower()] = plugin
 
     def update(self):
         """
@@ -2178,7 +2211,7 @@ class MainIndex:
         """
         return _generate_documentation(self, dest=dest, buildhtml=buildhtml, onlyinstalled=onlyinstalled)
 
-    def _parse_plugin(self, pluginname: str) -> Plugin:
+    def _parse_plugin(self, pluginname: str) -> Plugin | None:
         pluginsource = self.pluginsources.get(pluginname)
         if pluginsource is None:
             raise KeyError(f"Plugin {pluginname} not known. Known plugins: {self.pluginsources.keys()}")
@@ -2284,7 +2317,7 @@ class MainIndex:
                f"detected Csound opcodes: {len(detected_opcodes)}")
         _debug(f"  Expected binary: {binary_name}; installed binary: {installed_path or '<not found>'}")
         _debug(f"  Risset user plugins directory: {plugin_dir} (exists: {plugin_dir.is_dir()})")
-        for envvar in ('CS_USER_PLUGINDIR', 'OPCODE7DIR64', 'OPCODE6DIR64', 'LIBCSOUNDPATH'):
+        for envvar in ('CS_USER_PLUGINDIR', 'OPCODE7DIR64', 'LIBCSOUNDPATH'):
             _debug(f"  {envvar}={os.environ.get(envvar, '<unset>')}")
         present = [opcode for opcode in plugin.opcodes if opcode in detected_opcodes]
         _debug(f"  Declared opcodes detected from this plugin: {present[:20]}"
@@ -4059,9 +4092,12 @@ def validate_definition(infile: str) -> str:
             else:
                 versionrangestr = binary['csound_version']
                 try:
-                    _parse_version(versionrangestr)
+                    versionrange = _parse_version(versionrangestr)
                 except ParseError as e:
                     return f"Invalid version in 'csound_version': {versionrangestr}, error: {e}"
+                if not versionrange.supports_csound7():
+                    return (f"Invalid version in 'csound_version': {versionrangestr}. "
+                            f"Csound 6 is no longer supported")
 
 
     errors = []
